@@ -272,3 +272,15 @@ it('never sends saved API keys back to the admin screen', function () {
     $this->actingAs(makeAdminUserWithPermissions(['view shop products']));
     $this->getJson(route('dashboard.admin.shop.payments.index'))->assertForbidden();
 });
+
+it('lets payment providers reach the webhook without a CSRF token', function () {
+    // CSRF checks are skipped in tests, so check the route's real middleware instead.
+    // Resolving the HTTP kernel gives the router its middleware groups ("web").
+    app(Illuminate\Contracts\Http\Kernel::class);
+    $route = app('router')->getRoutes()->getByName('shop.payment.webhook');
+    $middleware = collect(app('router')->gatherRouteMiddleware($route))
+        ->filter(fn ($name) => is_string($name) && preg_match('/Csrf|RequestForgery/', $name) === 1);
+
+    expect(app('router')->getMiddlewareGroups())->toHaveKey('web')
+        ->and($middleware->all())->toBe([]);
+});

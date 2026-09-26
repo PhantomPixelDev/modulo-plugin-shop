@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Route;
 use Plugins\ModuloShop\src\Http\Controllers\AccountController;
@@ -83,9 +84,10 @@ Route::prefix('shop')->group(function () {
     Route::get('/payment/{gateway}/cancel/{orderNumber}', [PaymentController::class, 'cancel'])
         ->middleware('throttle:30,1')
         ->name('shop.payment.cancel');
-    // Called by the provider, not the browser: no CSRF token; each gateway verifies the sender
+    // Called by the provider, not the browser: no CSRF token; each gateway verifies the sender.
+    // Laravel 13 renamed the middleware; excluding the old name no longer removes it.
     Route::post('/payment/{gateway}/webhook', [PaymentController::class, 'webhook'])
-        ->withoutMiddleware([ValidateCsrfToken::class])
+        ->withoutMiddleware([class_exists(PreventRequestForgery::class) ? PreventRequestForgery::class : ValidateCsrfToken::class])
         ->middleware('throttle:120,1')
         ->name('shop.payment.webhook');
 
