@@ -3,11 +3,58 @@
 namespace Plugins\ModuloShop\src\Models;
 
 use App\Models\User;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
+use Plugins\ModuloShop\src\Support\ProductData;
 
+/**
+ * @property int $id
+ * @property string $order_number
+ * @property int|null $user_id
+ * @property string $status
+ * @property string $subtotal
+ * @property string $discount
+ * @property string $shipping
+ * @property string $tax
+ * @property string $total
+ * @property string $currency
+ * @property string $customer_email
+ * @property string $customer_name
+ * @property string|null $customer_phone
+ * @property string $billing_address_1
+ * @property string|null $billing_address_2
+ * @property string $billing_city
+ * @property string|null $billing_state
+ * @property string $billing_postcode
+ * @property string $billing_country
+ * @property bool $ship_to_different
+ * @property string|null $shipping_address_1
+ * @property string|null $shipping_address_2
+ * @property string|null $shipping_city
+ * @property string|null $shipping_state
+ * @property string|null $shipping_postcode
+ * @property string|null $shipping_country
+ * @property string|null $payment_method
+ * @property string $payment_status
+ * @property string|null $transaction_id
+ * @property Carbon|null $paid_at
+ * @property string|null $shipping_method Name of the method chosen at checkout
+ * @property string|null $tracking_number
+ * @property Carbon|null $shipped_at
+ * @property string|null $customer_note
+ * @property string|null $admin_note
+ * @property string|null $coupon_code
+ * @property array<string, mixed>|null $meta_data
+ * @property string|null $access_token
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
+ * @property-read Collection<int, OrderItem> $items
+ * @property-read Collection<int, OrderNote> $notes
+ */
 class Order extends Model
 {
     protected $table = 'shop_orders';
@@ -130,6 +177,42 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class, 'order_id');
+    }
+
+    public function notes(): HasMany
+    {
+        return $this->hasMany(OrderNote::class, 'order_id')->oldest('id');
+    }
+
+    /**
+     * Add a line to the order's history. Staff notes carry who wrote them;
+     * changes made by the system (payments, expiry) don't.
+     */
+    public function addNote(string $message, string $type = OrderNote::SYSTEM, ?int $userId = null, bool $customerNotified = false): OrderNote
+    {
+        return OrderNote::create([
+            'order_id' => $this->id,
+            'message' => $message,
+            'type' => $type,
+            'user_id' => $userId,
+            'customer_notified' => $customerNotified,
+        ]);
+    }
+
+    /**
+     * Quantities per product (or product:variation), as stock sees them.
+     *
+     * @return array<string, int>
+     */
+    public function quantities(): array
+    {
+        $quantities = [];
+        foreach (OrderItem::where('order_id', $this->id)->whereNotNull('product_id')->get() as $item) {
+            $key = ProductData::lineKey((int) $item->product_id, $item->product_data['variant_id'] ?? null);
+            $quantities[$key] = ($quantities[$key] ?? 0) + (int) $item->quantity;
+        }
+
+        return $quantities;
     }
 
     public function isPaid(): bool
