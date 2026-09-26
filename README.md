@@ -2,7 +2,7 @@
 
 Products, categories, cart and orders for Modulo CMS.
 
-A plugin for [Modulo CMS](https://github.com/PhantomPixelDev/modulo-cms). Needs Modulo 0.2.0 or newer.
+A plugin for [Modulo CMS](https://github.com/PhantomPixelDev/modulo-cms). Needs Modulo 0.3.0 or newer.
 
 ## Features
 
@@ -35,6 +35,22 @@ before anything is unpacked.
 The storefront pages are rendered by the active theme; the default `modern-react`
 theme in core ships them. A theme without shop templates still gets the admin and the
 API, just no public shop pages.
+
+## Admin screens
+
+The admin screens are this plugin's own React bundle, `resources/dist/plugin.js`, which the
+core loads the first time a shop page is opened. They use the core's admin kit
+(`@modulo/ui`: buttons, forms, tables, dialogs, the admin layout) and its React, so the
+bundle stays small and the screens look like the rest of the admin. The Shop entry in the
+sidebar comes from `admin.menu` in `plugin.json`.
+
+To change them, edit `resources/js`, then rebuild and commit the bundle:
+
+```bash
+npm install
+npm run types
+npm run build
+```
 
 ## Releasing
 
