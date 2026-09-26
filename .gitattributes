@@ -9,3 +9,8 @@
 /package-lock.json export-ignore
 /vite.config.js export-ignore
 /tsconfig.json export-ignore
+# Tests run in CI against Modulo core; they are not part of the plugin
+/tests export-ignore
+# Sources of resources/dist; the package ships the built files
+/resources/js export-ignore
+/resources/css export-ignore

@@ -1,12 +1,12 @@
 import { jsxs as a, jsx as e, Fragment as ye } from "react/jsx-runtime";
-import { useAcl as Ie, useAdminToast as de, Button as y, EmptyState as Le, TableContainer as Se, Table as ie, TableHeader as ne, TableRow as z, TableHead as S, TableBody as le, TableCell as C, Badge as Q, Dialog as we, DialogContent as Fe, DialogHeader as Pe, DialogTitle as $e, DialogDescription as De, Label as c, Input as v, Select as R, SelectTrigger as I, SelectValue as L, SelectContent as E, SelectItem as $, Switch as J, DialogFooter as Ae, SectionWrapper as X, Card as U, CardHeader as V, CardTitle as H, CardDescription as G, CardFooter as ce, CardContent as K, Textarea as ue, Checkbox as Te, MediaPickerDialog as Ee, Tabs as Be, TabsList as He, TabsTrigger as se, TabsContent as re } from "@modulo/ui";
+import { useAcl as Ie, useAdminToast as de, Button as y, EmptyState as Le, TableContainer as Se, Table as ie, TableHeader as ne, TableRow as z, TableHead as S, TableBody as le, TableCell as C, Badge as Q, Dialog as we, DialogContent as Fe, DialogHeader as Pe, DialogTitle as $e, DialogDescription as De, Label as c, Input as v, Select as R, SelectTrigger as I, SelectValue as L, SelectContent as E, SelectItem as $, Switch as J, DialogFooter as Ae, SectionWrapper as X, Card as U, CardHeader as V, CardTitle as H, CardDescription as G, CardFooter as ce, CardContent as q, Textarea as ue, Checkbox as Te, MediaPickerDialog as Ee, Tabs as Be, TabsList as He, TabsTrigger as se, TabsContent as re } from "@modulo/ui";
 import { router as F, Head as ee, Link as Ye, usePage as We } from "@inertiajs/react";
-import { forwardRef as Oe, createElement as ge, useState as w, useMemo as ve, useEffect as Ke } from "react";
+import { forwardRef as Oe, createElement as ge, useState as w, useMemo as ve, useEffect as qe } from "react";
 function te() {
   const { isAdmin: t, hasPermission: s } = Ie();
   return (d) => t() || s(d);
 }
-const qe = (t) => t.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase(), Ge = (t) => t.replace(
+const Ke = (t) => t.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase(), Ge = (t) => t.replace(
   /^([A-Z])|[\s-_]+(\w)/g,
   (s, d, o) => o ? o.toUpperCase() : d.toLowerCase()
 ), xe = (t) => {
@@ -63,7 +63,7 @@ const j = (t, s) => {
       ref: _,
       iconNode: s,
       className: Me(
-        `lucide-${qe(xe(t))}`,
+        `lucide-${Ke(xe(t))}`,
         `lucide-${t}`,
         o
       ),
@@ -250,8 +250,8 @@ function wt({ coupons: t, canManage: s }) {
       onSuccess: () => {
         d(f ? "Coupon updated" : "Coupon created"), _(!1);
       },
-      onError: (q) => {
-        p(q), o("Please check the coupon details");
+      onError: (K) => {
+        p(K), o("Please check the coupon details");
       },
       onFinish: () => O(!1)
     };
@@ -638,7 +638,7 @@ function Tt({ order: t, canManage: s }) {
         onFinish: () => p(!1)
       }
     );
-  }, q = () => {
+  }, K = () => {
     P(!0), F.post(
       D.shop.orders.notes(t.id),
       { message: x, notify_customer: n },
@@ -679,7 +679,7 @@ function Tt({ order: t, canManage: s }) {
           /* @__PURE__ */ e(Q, { variant: t.payment_status === "paid" ? "default" : "secondary", children: t.payment_status_label })
         ] })
       ] }),
-      /* @__PURE__ */ a(K, { className: "grid gap-4 md:grid-cols-3", children: [
+      /* @__PURE__ */ a(q, { className: "grid gap-4 md:grid-cols-3", children: [
         /* @__PURE__ */ a("div", { className: "space-y-1", children: [
           /* @__PURE__ */ e(c, { htmlFor: "order-status", children: "Status" }),
           /* @__PURE__ */ a(R, { value: N, onValueChange: _, disabled: !s, children: [
@@ -712,7 +712,7 @@ function Tt({ order: t, canManage: s }) {
     /* @__PURE__ */ a("div", { className: "grid gap-6 lg:grid-cols-3", children: [
       /* @__PURE__ */ a(U, { className: "lg:col-span-2", children: [
         /* @__PURE__ */ e(V, { children: /* @__PURE__ */ e(H, { children: "Items" }) }),
-        /* @__PURE__ */ a(K, { children: [
+        /* @__PURE__ */ a(q, { children: [
           /* @__PURE__ */ a(ie, { children: [
             /* @__PURE__ */ e(ne, { children: /* @__PURE__ */ a(z, { children: [
               /* @__PURE__ */ e(S, { children: "Product" }),
@@ -756,7 +756,7 @@ function Tt({ order: t, canManage: s }) {
       ] }),
       /* @__PURE__ */ a(U, { children: [
         /* @__PURE__ */ e(V, { children: /* @__PURE__ */ e(H, { children: "Customer" }) }),
-        /* @__PURE__ */ a(K, { className: "space-y-4 text-sm", children: [
+        /* @__PURE__ */ a(q, { className: "space-y-4 text-sm", children: [
           /* @__PURE__ */ a("div", { children: [
             /* @__PURE__ */ e("div", { className: "font-medium", children: t.customer_name }),
             /* @__PURE__ */ e("a", { className: "text-muted-foreground underline", href: `mailto:${t.customer_email}`, children: t.customer_email }),
@@ -787,7 +787,7 @@ function Tt({ order: t, canManage: s }) {
         /* @__PURE__ */ e(H, { children: "Payment attempts" }),
         /* @__PURE__ */ e(G, { children: "Every time the customer was sent to a payment provider." })
       ] }),
-      /* @__PURE__ */ e(K, { children: /* @__PURE__ */ a(ie, { children: [
+      /* @__PURE__ */ e(q, { children: /* @__PURE__ */ a(ie, { children: [
         /* @__PURE__ */ e(ne, { children: /* @__PURE__ */ a(z, { children: [
           /* @__PURE__ */ e(S, { children: "When" }),
           /* @__PURE__ */ e(S, { children: "Provider" }),
@@ -809,7 +809,7 @@ function Tt({ order: t, canManage: s }) {
         /* @__PURE__ */ e(H, { children: "History" }),
         /* @__PURE__ */ e(G, { children: "Notes from staff, status changes and payment events." })
       ] }),
-      /* @__PURE__ */ a(K, { className: "space-y-4", children: [
+      /* @__PURE__ */ a(q, { className: "space-y-4", children: [
         ae.length === 0 && /* @__PURE__ */ e("p", { className: "text-sm text-muted-foreground", children: "Nothing yet." }),
         /* @__PURE__ */ e("ol", { className: "space-y-3", children: ae.map((u) => /* @__PURE__ */ a("li", { className: `rounded-md border p-3 text-sm ${u.type === "note" ? "bg-muted/40" : ""}`, children: [
           /* @__PURE__ */ e("div", { className: "whitespace-pre-line", children: u.message }),
@@ -834,7 +834,7 @@ function Tt({ order: t, canManage: s }) {
               /* @__PURE__ */ e(Te, { checked: n, onCheckedChange: (u) => A(u === !0) }),
               "Email this note to the customer"
             ] }),
-            /* @__PURE__ */ e(y, { onClick: q, disabled: b || x.trim() === "", children: b ? "Adding…" : "Add note" })
+            /* @__PURE__ */ e(y, { onClick: K, disabled: b || x.trim() === "", children: b ? "Adding…" : "Add note" })
           ] })
         ] })
       ] })
@@ -899,7 +899,7 @@ function Mt({ gateway: t, canManage: s }) {
       ] }),
       /* @__PURE__ */ e(J, { checked: N, onCheckedChange: _, disabled: !s, "aria-label": `Offer ${t.label}` })
     ] }),
-    t.fields.length > 0 && /* @__PURE__ */ a(K, { className: "grid gap-4 md:grid-cols-2", children: [
+    t.fields.length > 0 && /* @__PURE__ */ a(q, { className: "grid gap-4 md:grid-cols-2", children: [
       t.fields.map((n) => {
         const A = `${t.id}-${n.key}`, b = n.type === "secret" && t.values[n.key] === !0 && !h.includes(n.key);
         return /* @__PURE__ */ a("div", { className: `space-y-1 ${n.type === "textarea" ? "md:col-span-2" : ""}`, children: [
@@ -1233,7 +1233,7 @@ function Rt({
     stock: "",
     status: "published",
     featured_image: ""
-  }), M = ve(() => t?.data ?? [], [t]), Y = _ && b.name.trim().length > 0 && String(b.price).trim().length > 0, r = ve(() => ({ ...p, ...n }), [p, n]), [Z, q] = w(!1), [oe, ae] = w(Ce(null)), [u, W] = w(null), [T, B] = w({
+  }), M = ve(() => t?.data ?? [], [t]), Y = _ && b.name.trim().length > 0 && String(b.price).trim().length > 0, r = ve(() => ({ ...p, ...n }), [p, n]), [Z, K] = w(!1), [oe, ae] = w(Ce(null)), [u, W] = w(null), [T, B] = w({
     sku: "",
     name: "",
     slug: "",
@@ -1256,9 +1256,9 @@ function Rt({
       stock: l.stock === null || l.stock === void 0 ? "" : String(l.stock),
       status: l.is_active ? "published" : "draft",
       featured_image: l.featured_image ?? ""
-    }), ae(Ce(l)), A({}), q(!0));
+    }), ae(Ce(l)), A({}), K(!0));
   };
-  Ke(() => {
+  qe(() => {
     o && _e(o);
   }, [o?.id]);
   const fe = (l) => {
@@ -1319,7 +1319,7 @@ function Rt({
       {
         preserveScroll: !0,
         onSuccess: () => {
-          h("Product updated"), q(!1), W(null);
+          h("Product updated"), K(!1), W(null);
         },
         onError: (l) => {
           A(l), m("Failed to update product");
@@ -1348,7 +1348,7 @@ function Rt({
           /* @__PURE__ */ e(y, { variant: "outline", size: "sm", onClick: () => F.visit(D.shop.settings.index()), children: "Shop Settings" })
         ] })
       ] }),
-      /* @__PURE__ */ e(K, { children: /* @__PURE__ */ a(Se, { children: [
+      /* @__PURE__ */ e(q, { children: /* @__PURE__ */ a(Se, { children: [
         /* @__PURE__ */ a(ie, { dense: !0, children: [
           /* @__PURE__ */ e(ne, { children: /* @__PURE__ */ a(z, { children: [
             /* @__PURE__ */ e(S, { children: "Name" }),
@@ -1432,7 +1432,7 @@ function Rt({
         /* @__PURE__ */ e(H, { children: "Create product" }),
         /* @__PURE__ */ e(G, { children: "Add a new product to your store." })
       ] }),
-      /* @__PURE__ */ a(K, { className: "space-y-4", children: [
+      /* @__PURE__ */ a(q, { className: "space-y-4", children: [
         /* @__PURE__ */ a("div", { className: "grid gap-4 md:grid-cols-2", children: [
           /* @__PURE__ */ a("div", { className: "space-y-2", children: [
             /* @__PURE__ */ e(c, { htmlFor: "name", children: "Name" }),
@@ -1563,7 +1563,7 @@ function Rt({
       ] }),
       /* @__PURE__ */ e(ce, { className: "justify-end", children: /* @__PURE__ */ e(y, { onClick: Ve, disabled: !Y || x, children: x ? "Creating…" : "Create product" }) })
     ] }),
-    /* @__PURE__ */ e(we, { open: Z, onOpenChange: q, children: /* @__PURE__ */ a(Fe, { className: "max-h-[90vh] overflow-y-auto sm:max-w-3xl", children: [
+    /* @__PURE__ */ e(we, { open: Z, onOpenChange: K, children: /* @__PURE__ */ a(Fe, { className: "max-h-[90vh] overflow-y-auto sm:max-w-3xl", children: [
       /* @__PURE__ */ a(Pe, { children: [
         /* @__PURE__ */ e($e, { children: "Edit product" }),
         /* @__PURE__ */ e(De, { children: "Update product details." })
@@ -1675,7 +1675,7 @@ function Rt({
         ] })
       ] }),
       /* @__PURE__ */ a(Ae, { children: [
-        /* @__PURE__ */ e(y, { variant: "outline", onClick: () => q(!1), disabled: x, children: "Cancel" }),
+        /* @__PURE__ */ e(y, { variant: "outline", onClick: () => K(!1), disabled: x, children: "Cancel" }),
         /* @__PURE__ */ e(y, { onClick: ze, disabled: x || !f, children: x ? "Saving…" : "Save changes" })
       ] })
     ] }) })
@@ -1820,7 +1820,7 @@ function Et({ settings: t, canEdit: s, onSave: d }) {
           }
         )
       ] }) }),
-      /* @__PURE__ */ a(K, { className: "pt-6", children: [
+      /* @__PURE__ */ a(q, { className: "pt-6", children: [
         /* @__PURE__ */ e(re, { value: "general", className: "mt-0 space-y-6", children: /* @__PURE__ */ a("div", { className: "grid gap-6 sm:grid-cols-2", children: [
           /* @__PURE__ */ a("div", { className: "space-y-2", children: [
             /* @__PURE__ */ e(c, { htmlFor: "store_name", children: "Store Name" }),
@@ -2223,3 +2223,7 @@ window.Modulo.registerComponents("modulo-shop", {
   Payments: Ut,
   Settings: Bt
 });
+if (!document.querySelector('link[data-modulo-plugin="modulo-shop"]')) {
+  const t = document.createElement("link");
+  t.rel = "stylesheet", t.href = new URL("./plugin.css", import.meta.url).href, t.dataset.moduloPlugin = "modulo-shop", document.head.appendChild(t);
+}
