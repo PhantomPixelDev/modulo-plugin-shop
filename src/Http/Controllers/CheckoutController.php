@@ -2,21 +2,27 @@
 
 namespace Plugins\ModuloShop\src\Http\Controllers;
 
-use App\Models\SiteSetting;
+use App\Models\Post;
+use App\Models\User;
 use App\Services\PostService;
 use App\Services\ReactTemplateRenderer;
+use App\Services\SiteSettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Response;
-use Plugins\ModuloShop\src\Mail\OrderPlacedAdmin;
-use Plugins\ModuloShop\src\Mail\OrderPlacedCustomer;
+use Plugins\ModuloShop\src\Models\Coupon;
 use Plugins\ModuloShop\src\Models\Order;
 use Plugins\ModuloShop\src\Models\OrderItem;
+use Plugins\ModuloShop\src\Payments\Gateways\BankTransferGateway;
+use Plugins\ModuloShop\src\Payments\PaymentException;
+use Plugins\ModuloShop\src\Payments\PaymentGateway;
 use Plugins\ModuloShop\src\Services\CartService;
+use Plugins\ModuloShop\src\Services\ModuloShopSettings;
+use Plugins\ModuloShop\src\Services\PaymentService;
 use Plugins\ModuloShop\src\Services\StockService;
 
 class CheckoutController
@@ -29,6 +35,7 @@ class CheckoutController
         CartService $cartService,
         ReactTemplateRenderer $reactRenderer,
         protected StockService $stock,
+        protected PaymentService $payments,
     ) {
         $this->cartService = $cartService;
         $this->reactRenderer = $reactRenderer;
@@ -36,6 +43,10 @@ class CheckoutController
 
     public function index(Request $request): JsonResponse|Response|RedirectResponse
     {
+        if ($closed = $this->closedResponse($request)) {
+            return $closed;
+        }
+
         $cart = $this->cartService->getCartWithProducts();
         $totals = $this->cartService->getTotals();
 
@@ -57,10 +68,14 @@ class CheckoutController
                     'name' => $user->name,
                     'email' => $user->email,
                 ] : null,
+                'payment_methods' => $this->paymentMethods(),
+                'saved_address' => $user ? $this->savedAddress($user) : null,
+                'terms_url' => $this->termsUrl(),
             ]);
         }
 
         return $this->reactRenderer->render('Shop/Checkout', [
+            'money' => app(ModuloShopSettings::class)->moneyFormat(),
             'cart' => $cart,
             'totals' => $totals,
             'user' => $user ? [
@@ -68,11 +83,57 @@ class CheckoutController
                 'email' => $user->email,
             ] : null,
             'countries' => $this->getCountries(),
+            'payment_methods' => $this->paymentMethods(),
+            'saved_address' => $user ? $this->savedAddress($user) : null,
+            'terms_url' => $this->termsUrl(),
         ]);
+    }
+
+    /**
+     * A returning customer's details from their last order, to fill in the form.
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function savedAddress(User $user): ?array
+    {
+        $last = AccountController::ordersOf($user)->latest('id')->first();
+
+        return $last?->only([
+            'customer_phone',
+            'billing_address_1', 'billing_address_2', 'billing_city', 'billing_state', 'billing_postcode', 'billing_country',
+            'ship_to_different',
+            'shipping_address_1', 'shipping_address_2', 'shipping_city', 'shipping_state', 'shipping_postcode', 'shipping_country',
+        ]);
+    }
+
+    /** The published terms page chosen in shop settings, if any. */
+    protected function termsUrl(): ?string
+    {
+        $pageId = app(ModuloShopSettings::class)->get('terms_page_id');
+        $page = $pageId ? Post::query()->whereKey($pageId)->where('status', 'published')->first() : null;
+
+        return $page ? app(SiteSettingsService::class)->formatPostUrl($page) : null;
+    }
+
+    /**
+     * @return list<array{id: string, label: string, description: string, online: bool}>
+     */
+    protected function paymentMethods(): array
+    {
+        return array_values(array_map(fn (PaymentGateway $g) => [
+            'id' => $g->id(),
+            'label' => $g->label(),
+            'description' => $g->description(),
+            'online' => $g->isOnline(),
+        ], $this->payments->available()));
     }
 
     public function store(Request $request): JsonResponse|RedirectResponse
     {
+        if ($closed = $this->closedResponse($request)) {
+            return $closed;
+        }
+
         $cart = $this->cartService->getCartWithProducts();
 
         if ($cart['is_empty']) {
@@ -101,19 +162,42 @@ class CheckoutController
             'shipping_postcode' => 'required_if:ship_to_different,true|nullable|string|max:20',
             'shipping_country' => 'required_if:ship_to_different,true|nullable|string|size:2',
             'customer_note' => 'nullable|string|max:1000',
-            'payment_method' => 'required|string|in:cod,bank_transfer',
+            'payment_method' => ['required', 'string', Rule::in(array_keys($this->payments->available()))],
+            'shipping_method' => 'nullable|string|max:100',
+            'accept_terms' => $this->termsUrl() ? 'accepted' : 'nullable',
+        ], [
+            'accept_terms.accepted' => 'Please accept the terms and conditions.',
         ]);
 
+        if (! empty($validated['shipping_method'])) {
+            $this->cartService->setShippingMethod($validated['shipping_method']);
+        }
+
         $totals = $this->cartService->getTotals($cart);
-        $quantities = collect($cart['items'])
-            ->groupBy('product_id')
-            ->map(fn ($items) => (int) $items->sum('quantity'))
-            ->all();
+
+        // A coupon that stopped applying since it was added (expired, used up,
+        // cart now below its minimum) must not be dropped silently at payment.
+        if (! empty($this->cartService->getCart()['coupon_code']) && $totals['coupon'] === null) {
+            throw ValidationException::withMessages([
+                'coupon' => $totals['coupon_error'] ?? 'Your coupon can no longer be used. Remove it to continue.',
+            ]);
+        }
+        $quantities = $this->cartService->quantities($cart);
 
         try {
             $order = DB::transaction(function () use ($validated, $cart, $totals, $request, $quantities) {
                 // Locks the product rows and re-checks stock; throws (and rolls back) when short
                 $this->stock->reserve($quantities);
+
+                // Same for the coupon: two orders racing for its last use get one each at most.
+                if ($totals['coupon'] !== null) {
+                    $coupon = Coupon::query()->where('code', $totals['coupon']['code'])->lockForUpdate()->first();
+                    $reason = $coupon ? $coupon->unusableReason((float) $totals['subtotal']) : 'This coupon is no longer available.';
+                    if ($reason !== null) {
+                        throw ValidationException::withMessages(['coupon' => $reason]);
+                    }
+                    $coupon->increment('used_count');
+                }
 
                 $order = Order::create([
                     'order_number' => Order::generateOrderNumber(),
@@ -144,13 +228,19 @@ class CheckoutController
                     'customer_note' => $validated['customer_note'] ?? null,
                     'payment_method' => $validated['payment_method'],
                     'payment_status' => Order::PAYMENT_PENDING,
+                    'shipping_method' => $totals['shipping_method_name'],
+                    'coupon_code' => $totals['coupon']['code'] ?? null,
+                    'meta_data' => [
+                        'tax_rate' => $totals['tax_rate'],
+                        'prices_include_tax' => $totals['prices_include_tax'],
+                    ],
                 ]);
 
                 foreach ($cart['items'] as $item) {
                     OrderItem::create([
                         'order_id' => $order->id,
                         'product_id' => $item['product_id'],
-                        'product_name' => $item['product_name'],
+                        'product_name' => $item['variant_name'] ? $item['product_name'].' — '.$item['variant_name'] : $item['product_name'],
                         'product_sku' => $item['sku'],
                         'price' => $item['price'],
                         'quantity' => $item['quantity'],
@@ -159,6 +249,8 @@ class CheckoutController
                             'slug' => $item['product_slug'],
                             'image' => $item['product_image'],
                             'original_price' => $item['original_price'],
+                            'variant_id' => $item['variant_id'],
+                            'variant_name' => $item['variant_name'],
                         ],
                     ]);
                 }
@@ -181,12 +273,35 @@ class CheckoutController
             return back()->withErrors(['checkout' => 'Failed to process order. Please try again.']);
         }
 
-        // The order is committed from here on; nothing below may turn it into an error response.
-        $this->cartService->clear();
         app(PostService::class)->flushCache(); // stock changed
+        $gateway = $this->payments->gateway($order->payment_method);
 
-        $order->loadMissing('items');
-        $this->sendOrderPlacedEmails($order);
+        // Online: off to the provider's page. If the provider refuses, the
+        // order is undone (stock and coupon back) and the cart kept, so the
+        // customer can pick another method straight away.
+        if ($gateway?->isOnline()) {
+            try {
+                $paymentUrl = $this->payments->start($order, $gateway);
+            } catch (PaymentException $e) {
+                $this->payments->cancelUnpaid($order, 'the payment provider refused to start the payment');
+
+                // 422, not 5xx: a proxy such as Cloudflare replaces 5xx bodies,
+                // and the customer needs this message to choose another method.
+                return $request->wantsJson()
+                    ? response()->json(['success' => false, 'message' => $e->getMessage(), 'errors' => ['payment_method' => [$e->getMessage()]]], 422)
+                    : back()->withErrors(['payment_method' => $e->getMessage()]);
+            }
+
+            $this->cartService->clear();
+
+            return $request->wantsJson()
+                ? response()->json(['success' => true, 'order' => ['id' => $order->id, 'order_number' => $order->order_number, 'total' => $order->total, 'currency' => $order->currency], 'redirect' => $paymentUrl])
+                : redirect()->away($paymentUrl);
+        }
+
+        // Offline: the order is committed from here on; nothing below may turn it into an error response.
+        $this->cartService->clear();
+        $this->payments->sendPlacedEmails($order);
 
         if ($request->wantsJson()) {
             return response()->json([
@@ -205,6 +320,24 @@ class CheckoutController
             ->with('success', 'Order placed successfully!');
     }
 
+    /**
+     * The store owner switched checkout off: browsing and the cart keep working.
+     */
+    protected function closedResponse(Request $request): JsonResponse|RedirectResponse|null
+    {
+        if (app(ModuloShopSettings::class)->checkoutEnabled()) {
+            return null;
+        }
+
+        $message = 'Checkout is currently closed. Please try again later.';
+
+        if ($request->wantsJson()) {
+            return response()->json(['error' => $message], 503);
+        }
+
+        return redirect('/shop/cart')->with('error', $message);
+    }
+
     public function confirmation(Request $request, string $orderNumber): JsonResponse|Response
     {
         $order = Order::where('order_number', $orderNumber)
@@ -221,8 +354,39 @@ class CheckoutController
         }
 
         return $this->reactRenderer->render('Shop/OrderConfirmation', [
+            'money' => app(ModuloShopSettings::class)->moneyFormat(),
             'order' => $this->transformOrder($order),
+            'payment' => $this->paymentState($order, $request->query('key')),
+            'flash' => [
+                'success' => session('success'),
+                'info' => session('info'),
+                'warning' => session('warning'),
+                'error' => session('error'),
+            ],
         ]);
+    }
+
+    /**
+     * What the confirmation page can offer: pay (again) for an unpaid online
+     * order, or the bank details for a transfer.
+     *
+     * @return array<string, mixed>
+     */
+    protected function paymentState(Order $order, mixed $key): array
+    {
+        $gateway = $this->payments->gateway($order->payment_method);
+        $unpaid = ! $order->isPaid() && $order->status === Order::STATUS_PENDING;
+        $online = array_values(array_filter($this->paymentMethods(), fn ($m) => $m['online']));
+
+        return [
+            'method_label' => $gateway?->label() ?? $order->payment_method,
+            'can_pay' => $unpaid && $online !== [],
+            'pay_url' => route('shop.order.pay', ['orderNumber' => $order->order_number, 'key' => is_string($key) ? $key : null]),
+            'online_methods' => $unpaid ? $online : [],
+            'current_online' => (bool) $gateway?->isOnline(),
+            'instructions' => $unpaid && $gateway instanceof BankTransferGateway ? $gateway->instructions() : null,
+            'invoice_url' => route('shop.order.invoice', ['orderNumber' => $order->order_number, 'key' => is_string($key) ? $key : null]),
+        ];
     }
 
     protected function transformOrder(Order $order): array
@@ -252,6 +416,9 @@ class CheckoutController
             ],
             'shipping_address' => $order->getShippingAddress(),
             'payment_method' => $order->payment_method,
+            'shipping_method' => $order->shipping_method,
+            'coupon_code' => $order->coupon_code,
+            'prices_include_tax' => (bool) ($order->meta_data['prices_include_tax'] ?? false),
             'customer_note' => $order->customer_note,
             'items' => $order->items->map(fn ($item) => [
                 'id' => $item->id,
@@ -301,27 +468,5 @@ class CheckoutController
             'SG' => 'Singapore',
             'HK' => 'Hong Kong',
         ];
-    }
-
-    protected function sendOrderPlacedEmails(Order $order): void
-    {
-        if ($order->customer_email) {
-            try {
-                Mail::to($order->customer_email)->send(new OrderPlacedCustomer($order));
-            } catch (\Throwable $e) {
-                logger()->error('Failed to send order placed customer email: '.$e->getMessage());
-            }
-        }
-
-        $adminEmail = SiteSetting::get('admin_email', config('mail.admin_address'))
-            ?: config('mail.admin_address');
-
-        if ($adminEmail) {
-            try {
-                Mail::to($adminEmail)->send(new OrderPlacedAdmin($order));
-            } catch (\Throwable $e) {
-                logger()->error('Failed to send order placed admin email: '.$e->getMessage());
-            }
-        }
     }
 }

@@ -1,11 +1,17 @@
 <?php
 
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Route;
+use Plugins\ModuloShop\src\Http\Controllers\AccountController;
+use Plugins\ModuloShop\src\Http\Controllers\Admin\CouponController;
 use Plugins\ModuloShop\src\Http\Controllers\Admin\OrderController;
+use Plugins\ModuloShop\src\Http\Controllers\Admin\PaymentSettingsController;
 use Plugins\ModuloShop\src\Http\Controllers\Admin\ProductController;
 use Plugins\ModuloShop\src\Http\Controllers\Admin\ShopSettingsController;
 use Plugins\ModuloShop\src\Http\Controllers\CartController;
 use Plugins\ModuloShop\src\Http\Controllers\CheckoutController;
+use Plugins\ModuloShop\src\Http\Controllers\InvoiceController;
+use Plugins\ModuloShop\src\Http\Controllers\PaymentController;
 use Plugins\ModuloShop\src\Http\Controllers\ShopController;
 
 /*
@@ -34,6 +40,16 @@ Route::prefix('shop')->group(function () {
     Route::post('/cart/clear', [CartController::class, 'clear'])
         ->middleware('throttle:60,1')
         ->name('shop.cart.clear');
+    // Tight limit: a coupon code is a guessable secret
+    Route::post('/cart/coupon', [CartController::class, 'applyCoupon'])
+        ->middleware('throttle:10,1')
+        ->name('shop.cart.coupon');
+    Route::delete('/cart/coupon', [CartController::class, 'removeCoupon'])
+        ->middleware('throttle:60,1')
+        ->name('shop.cart.coupon.remove');
+    Route::post('/cart/shipping', [CartController::class, 'shipping'])
+        ->middleware('throttle:60,1')
+        ->name('shop.cart.shipping');
     Route::get('/cart/count', [CartController::class, 'count'])
         ->name('shop.cart.count');
     Route::get('/cart/mini', [CartController::class, 'mini'])
@@ -48,6 +64,30 @@ Route::prefix('shop')->group(function () {
     Route::get('/order/{orderNumber}', [CheckoutController::class, 'confirmation'])
         ->middleware('throttle:30,1')
         ->name('shop.order.confirmation');
+    Route::get('/order/{orderNumber}/invoice', [InvoiceController::class, 'show'])
+        ->middleware('throttle:30,1')
+        ->name('shop.order.invoice');
+    Route::post('/order/{orderNumber}/pay', [PaymentController::class, 'pay'])
+        ->middleware('throttle:10,1')
+        ->name('shop.order.pay');
+
+    // The signed-in customer's orders (before the product catch-all below)
+    Route::get('/account', [AccountController::class, 'orders'])
+        ->middleware('auth')
+        ->name('shop.account');
+
+    // Online payments: back from the provider's page, and its server notifications
+    Route::get('/payment/{gateway}/return/{orderNumber}', [PaymentController::class, 'return'])
+        ->middleware('throttle:30,1')
+        ->name('shop.payment.return');
+    Route::get('/payment/{gateway}/cancel/{orderNumber}', [PaymentController::class, 'cancel'])
+        ->middleware('throttle:30,1')
+        ->name('shop.payment.cancel');
+    // Called by the provider, not the browser: no CSRF token; each gateway verifies the sender
+    Route::post('/payment/{gateway}/webhook', [PaymentController::class, 'webhook'])
+        ->withoutMiddleware([ValidateCsrfToken::class])
+        ->middleware('throttle:120,1')
+        ->name('shop.payment.webhook');
 
     // Product single page (must be last due to catch-all slug)
     Route::get('/{slug}', [ShopController::class, 'show'])
@@ -100,6 +140,24 @@ Route::middleware(['auth', 'verified', 'role_or_permission:super-admin|admin|acc
             ->name('orders.destroy');
 
         // Shop settings
+        Route::get('/payments', [PaymentSettingsController::class, 'index'])
+            ->name('payments.index');
+        Route::put('/payments/{gateway}', [PaymentSettingsController::class, 'update'])
+            ->name('payments.update');
+        Route::post('/orders/{order}/refund', [OrderController::class, 'refund'])
+            ->name('orders.refund');
+        Route::post('/orders/{order}/notes', [OrderController::class, 'addNote'])
+            ->name('orders.notes.store');
+
+        Route::get('/coupons', [CouponController::class, 'index'])
+            ->name('coupons.index');
+        Route::post('/coupons', [CouponController::class, 'store'])
+            ->name('coupons.store');
+        Route::put('/coupons/{coupon}', [CouponController::class, 'update'])
+            ->name('coupons.update');
+        Route::delete('/coupons/{coupon}', [CouponController::class, 'destroy'])
+            ->name('coupons.destroy');
+
         Route::get('/settings', [ShopSettingsController::class, 'index'])
             ->middleware('permission:manage shop settings')
             ->name('settings.index');

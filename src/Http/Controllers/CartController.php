@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Inertia\Response;
 use Plugins\ModuloShop\src\Services\CartService;
+use Plugins\ModuloShop\src\Services\ModuloShopSettings;
 
 class CartController
 {
@@ -33,6 +34,7 @@ class CartController
         }
 
         return $this->reactRenderer->render('Shop/Cart', [
+            'money' => app(ModuloShopSettings::class)->moneyFormat(),
             'cart' => $cart,
             'totals' => $totals,
         ]);
@@ -42,19 +44,22 @@ class CartController
     {
         $validated = $request->validate([
             'product_id' => 'required|integer',
+            'variant_id' => 'nullable|string|max:100',
             'quantity' => 'integer|min:1',
         ]);
 
         try {
             $cart = $this->cartService->addItem(
                 $validated['product_id'],
-                $validated['quantity'] ?? 1
+                $validated['quantity'] ?? 1,
+                $validated['variant_id'] ?? null,
             );
 
             return response()->json([
                 'success' => true,
                 'message' => 'Product added to cart',
                 'cart' => $cart,
+                'totals' => $this->cartService->getTotals($cart),
             ]);
         } catch (\InvalidArgumentException $e) {
             return response()->json([
@@ -68,19 +73,22 @@ class CartController
     {
         $validated = $request->validate([
             'product_id' => 'required|integer',
+            'variant_id' => 'nullable|string|max:100',
             'quantity' => 'required|integer|min:0',
         ]);
 
         try {
             $cart = $this->cartService->updateItemQuantity(
                 $validated['product_id'],
-                $validated['quantity']
+                $validated['quantity'],
+                $validated['variant_id'] ?? null,
             );
 
             return response()->json([
                 'success' => true,
                 'message' => 'Cart updated',
                 'cart' => $cart,
+                'totals' => $this->cartService->getTotals($cart),
             ]);
         } catch (\InvalidArgumentException $e) {
             return response()->json([
@@ -94,14 +102,16 @@ class CartController
     {
         $validated = $request->validate([
             'product_id' => 'required|integer',
+            'variant_id' => 'nullable|string|max:100',
         ]);
 
-        $cart = $this->cartService->removeItem($validated['product_id']);
+        $cart = $this->cartService->removeItem($validated['product_id'], $validated['variant_id'] ?? null);
 
         return response()->json([
             'success' => true,
             'message' => 'Item removed from cart',
             'cart' => $cart,
+            'totals' => $this->cartService->getTotals($cart),
         ]);
     }
 
@@ -113,6 +123,51 @@ class CartController
             'success' => true,
             'message' => 'Cart cleared',
             'cart' => $this->cartService->getCartWithProducts(),
+        ]);
+    }
+
+    public function applyCoupon(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'code' => 'required|string|max:64',
+        ]);
+
+        $error = $this->cartService->applyCoupon($validated['code']);
+        $cart = $this->cartService->getCartWithProducts();
+
+        return response()->json([
+            'success' => $error === null,
+            'message' => $error ?? 'Coupon applied',
+            'cart' => $cart,
+            'totals' => $this->cartService->getTotals($cart),
+        ], $error === null ? 200 : 422);
+    }
+
+    public function removeCoupon(): JsonResponse
+    {
+        $this->cartService->removeCoupon();
+        $cart = $this->cartService->getCartWithProducts();
+
+        return response()->json([
+            'success' => true,
+            'cart' => $cart,
+            'totals' => $this->cartService->getTotals($cart),
+        ]);
+    }
+
+    public function shipping(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'shipping_method' => 'required|string|max:100',
+        ]);
+
+        $this->cartService->setShippingMethod($validated['shipping_method']);
+        $cart = $this->cartService->getCartWithProducts();
+
+        return response()->json([
+            'success' => true,
+            'cart' => $cart,
+            'totals' => $this->cartService->getTotals($cart),
         ]);
     }
 
@@ -133,6 +188,7 @@ class CartController
             'subtotal' => $cart['subtotal'],
             'currency' => $cart['currency'],
             'is_empty' => $cart['is_empty'],
+            'money' => app(ModuloShopSettings::class)->moneyFormat(),
         ]);
     }
 }

@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
+use Plugins\ModuloShop\src\Support\ProductData;
 
 class ProductController
 {
@@ -23,6 +24,15 @@ class ProductController
         }
 
         return $this->productType;
+    }
+
+    /**
+     * Route model binding resolves any post; the shop permissions must only
+     * reach products.
+     */
+    protected function ensureProduct(Post $post): void
+    {
+        abort_unless($post->post_type_id === $this->getProductType()?->id, 404);
     }
 
     public function index(Request $request): JsonResponse|Response
@@ -69,30 +79,33 @@ class ProductController
             ->orderBy('name')
             ->get(['id', 'name', 'slug']);
 
-        return Inertia::render('Dashboard', [
-            'adminSection' => 'shop-products',
-            'shopProducts' => $products,
-            'productCategories' => $categories,
-        ]);
-    }
-
-    public function create(Request $request): Response
-    {
-        $this->authorizeCreate();
-
-        $categories = TaxonomyTerm::whereHas('taxonomy', fn ($q) => $q->where('slug', 'product-category'))
-            ->orderBy('name')
-            ->get(['id', 'name', 'slug']);
+        // ?edit={id} opens that product's edit dialog, whichever page it is on.
+        $editProduct = $request->integer('edit')
+            ? Post::where('post_type_id', $productType->id)->find($request->integer('edit'))
+            : null;
 
         $tags = TaxonomyTerm::whereHas('taxonomy', fn ($q) => $q->where('slug', 'product-tag'))
             ->orderBy('name')
             ->get(['id', 'name', 'slug']);
 
         return Inertia::render('Dashboard', [
-            'adminSection' => 'shop-products-create',
+            'adminSection' => 'shop-products',
+            'shopProducts' => $products,
             'productCategories' => $categories,
             'productTags' => $tags,
+            'editProduct' => $editProduct ? $this->transformForAdmin($editProduct) : null,
         ]);
+    }
+
+    /**
+     * Products are created and edited on the list screen (inline form and
+     * dialog); these URLs lead there so bookmarks and links keep working.
+     */
+    public function create(Request $request): RedirectResponse
+    {
+        $this->authorizeCreate();
+
+        return redirect()->route('dashboard.admin.shop.products.index');
     }
 
     public function store(Request $request): JsonResponse|RedirectResponse
@@ -119,7 +132,17 @@ class ProductController
             'stock' => 'nullable|integer|min:0',
             'currency' => 'nullable|string|max:10',
             'featured' => 'nullable|boolean',
-            'gallery' => 'nullable|array',
+            'gallery' => 'nullable|array|max:30',
+            'gallery.*' => 'string|max:500',
+            'sale_starts_at' => 'nullable|date',
+            'sale_ends_at' => 'nullable|date|after_or_equal:sale_starts_at',
+            'weight' => 'nullable|numeric|min:0',
+            'variants' => 'nullable|array|max:100',
+            'variants.*.id' => 'nullable|string|max:100',
+            'variants.*.name' => 'required|string|max:120',
+            'variants.*.sku' => 'nullable|string|max:64',
+            'variants.*.price' => 'nullable|numeric|min:0',
+            'variants.*.stock' => 'nullable|integer|min:0',
             'attributes' => 'nullable|array',
             'categories' => 'nullable|array',
             'tags' => 'nullable|array',
@@ -157,8 +180,12 @@ class ProductController
                 'stock' => isset($data['stock']) ? (int) $data['stock'] : null,
                 'currency' => $data['currency'] ?? 'USD',
                 'featured' => (bool) ($data['featured'] ?? false),
-                'gallery' => $data['gallery'] ?? [],
+                'gallery' => array_values($data['gallery'] ?? []),
                 'attributes' => $data['attributes'] ?? [],
+                'sale_starts_at' => $data['sale_starts_at'] ?? null,
+                'sale_ends_at' => $data['sale_ends_at'] ?? null,
+                'weight' => isset($data['weight']) ? (float) $data['weight'] : null,
+                'variants' => ProductData::prepareVariants($data['variants'] ?? []),
             ],
         ]);
 
@@ -176,31 +203,18 @@ class ProductController
             ->with('success', 'Product created successfully');
     }
 
-    public function edit(Request $request, Post $post): Response
+    public function edit(Request $request, Post $post): RedirectResponse
     {
         $this->authorizeEdit();
+        $this->ensureProduct($post);
 
-        $post->load('taxonomyTerms');
-
-        $categories = TaxonomyTerm::whereHas('taxonomy', fn ($q) => $q->where('slug', 'product-category'))
-            ->orderBy('name')
-            ->get(['id', 'name', 'slug']);
-
-        $tags = TaxonomyTerm::whereHas('taxonomy', fn ($q) => $q->where('slug', 'product-tag'))
-            ->orderBy('name')
-            ->get(['id', 'name', 'slug']);
-
-        return Inertia::render('Dashboard', [
-            'adminSection' => 'shop-products-edit',
-            'editProduct' => $this->transformForAdmin($post),
-            'productCategories' => $categories,
-            'productTags' => $tags,
-        ]);
+        return redirect()->route('dashboard.admin.shop.products.index', ['edit' => $post->id]);
     }
 
     public function update(Request $request, Post $post): JsonResponse|RedirectResponse
     {
         $this->authorizeEdit();
+        $this->ensureProduct($post);
 
         $productType = $this->getProductType();
 
@@ -220,7 +234,17 @@ class ProductController
             'stock' => 'nullable|integer|min:0',
             'currency' => 'nullable|string|max:10',
             'featured' => 'nullable|boolean',
-            'gallery' => 'nullable|array',
+            'gallery' => 'nullable|array|max:30',
+            'gallery.*' => 'string|max:500',
+            'sale_starts_at' => 'nullable|date',
+            'sale_ends_at' => 'nullable|date|after_or_equal:sale_starts_at',
+            'weight' => 'nullable|numeric|min:0',
+            'variants' => 'nullable|array|max:100',
+            'variants.*.id' => 'nullable|string|max:100',
+            'variants.*.name' => 'required|string|max:120',
+            'variants.*.sku' => 'nullable|string|max:64',
+            'variants.*.price' => 'nullable|numeric|min:0',
+            'variants.*.stock' => 'nullable|integer|min:0',
             'attributes' => 'nullable|array',
             'categories' => 'nullable|array',
             'tags' => 'nullable|array',
@@ -261,21 +285,45 @@ class ProductController
             'featured_image' => $data['featured_image'] ?? $post->featured_image,
             'status' => $status,
             'published_at' => $publishedAt,
+            // Merged, so keys this form doesn't know about survive an edit.
             'meta_data' => [
+                ...$existingMeta,
                 'price' => isset($data['price']) ? (float) $data['price'] : ($existingMeta['price'] ?? 0),
-                'sale_price' => isset($data['sale_price']) ? (float) $data['sale_price'] : ($existingMeta['sale_price'] ?? null),
+                // Sent as null means "clear" (no sale / stock not tracked); omitted keeps it.
+                'sale_price' => array_key_exists('sale_price', $data)
+                    ? ($data['sale_price'] === null ? null : (float) $data['sale_price'])
+                    : ($existingMeta['sale_price'] ?? null),
                 'sku' => $data['sku'] ?? $existingMeta['sku'] ?? null,
-                'stock' => isset($data['stock']) ? (int) $data['stock'] : ($existingMeta['stock'] ?? null),
+                'stock' => array_key_exists('stock', $data)
+                    ? ($data['stock'] === null ? null : (int) $data['stock'])
+                    : ($existingMeta['stock'] ?? null),
                 'currency' => $data['currency'] ?? $existingMeta['currency'] ?? 'USD',
                 'featured' => isset($data['featured']) ? (bool) $data['featured'] : ($existingMeta['featured'] ?? false),
-                'gallery' => $data['gallery'] ?? $existingMeta['gallery'] ?? [],
+                'gallery' => array_key_exists('gallery', $data) ? array_values($data['gallery'] ?? []) : ($existingMeta['gallery'] ?? []),
                 'attributes' => $data['attributes'] ?? $existingMeta['attributes'] ?? [],
+                'sale_starts_at' => array_key_exists('sale_starts_at', $data) ? $data['sale_starts_at'] : ($existingMeta['sale_starts_at'] ?? null),
+                'sale_ends_at' => array_key_exists('sale_ends_at', $data) ? $data['sale_ends_at'] : ($existingMeta['sale_ends_at'] ?? null),
+                'weight' => array_key_exists('weight', $data) ? ($data['weight'] === null ? null : (float) $data['weight']) : ($existingMeta['weight'] ?? null),
+                // Stock in existing variations is kept when the form leaves it out
+                'variants' => array_key_exists('variants', $data)
+                    ? ProductData::prepareVariants($data['variants'] ?? [])
+                    : ($existingMeta['variants'] ?? []),
             ],
         ]);
 
-        // Sync categories and tags
-        $termIds = array_merge($data['categories'] ?? [], $data['tags'] ?? []);
-        $post->taxonomyTerms()->sync($termIds);
+        // Only when the form sent them: an edit without the fields must not
+        // strip the product's categories and tags.
+        if ($request->has('categories') || $request->has('tags')) {
+            $current = $post->taxonomyTerms()->with('taxonomy')->get();
+            $keep = fn (string $taxonomy) => $current
+                ->filter(fn ($term) => $term->taxonomy?->slug === $taxonomy)
+                ->pluck('id')->all();
+
+            $post->taxonomyTerms()->sync(array_merge(
+                $request->has('categories') ? ($data['categories'] ?? []) : $keep('product-category'),
+                $request->has('tags') ? ($data['tags'] ?? []) : $keep('product-tag'),
+            ));
+        }
 
         if ($request->wantsJson()) {
             return response()->json($this->transformForAdmin($post));
@@ -288,6 +336,7 @@ class ProductController
     public function destroy(Request $request, Post $post): JsonResponse|RedirectResponse
     {
         $this->authorizeDelete();
+        $this->ensureProduct($post);
 
         $post->taxonomyTerms()->detach();
         $post->delete();
@@ -327,6 +376,11 @@ class ProductController
             'featured' => (bool) ($meta['featured'] ?? false),
             'gallery' => $meta['gallery'] ?? [],
             'attributes' => $meta['attributes'] ?? [],
+            'sale_starts_at' => $meta['sale_starts_at'] ?? null,
+            'sale_ends_at' => $meta['sale_ends_at'] ?? null,
+            'sale_active' => ProductData::saleActive($meta),
+            'weight' => isset($meta['weight']) ? (float) $meta['weight'] : null,
+            'variants' => ProductData::variants($meta),
             'categories' => $product->taxonomyTerms
                 ->filter(fn ($t) => $t->taxonomy?->slug === 'product-category')
                 ->pluck('id')

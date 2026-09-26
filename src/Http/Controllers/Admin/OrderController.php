@@ -8,11 +8,18 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
+use Plugins\ModuloShop\src\Mail\OrderCancelledCustomer;
 use Plugins\ModuloShop\src\Mail\OrderCompletedCustomer;
+use Plugins\ModuloShop\src\Mail\OrderNoteCustomer;
 use Plugins\ModuloShop\src\Mail\OrderShippedCustomer;
 use Plugins\ModuloShop\src\Models\Order;
+use Plugins\ModuloShop\src\Models\OrderNote;
+use Plugins\ModuloShop\src\Models\Payment;
+use Plugins\ModuloShop\src\Payments\PaymentException;
+use Plugins\ModuloShop\src\Services\PaymentService;
 use Plugins\ModuloShop\src\Services\StockService;
 
 class OrderController
@@ -63,7 +70,7 @@ class OrderController
     {
         $this->authorizeView();
 
-        $order->load('items', 'user');
+        $order->load('items', 'user', 'notes.user');
 
         if ($request->wantsJson()) {
             return response()->json($this->transformForAdmin($order, true));
@@ -88,53 +95,72 @@ class OrderController
             'admin_note' => 'nullable|string|max:2000',
         ]);
 
+        $closed = [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED];
         $previousStatus = $order->status;
+        $previousPayment = $order->payment_status;
+        $previousTracking = $order->tracking_number;
 
-        // Update status if provided
         if (isset($validated['status'])) {
             $order->status = $validated['status'];
 
-            if ($validated['status'] === 'shipped' && ! $order->shipped_at) {
-                $order->shipped_at = now();
-            }
-
-            if ($validated['status'] === 'completed' && ! $order->shipped_at) {
+            if (in_array($validated['status'], [Order::STATUS_SHIPPED, Order::STATUS_COMPLETED], true) && ! $order->shipped_at) {
                 $order->shipped_at = now();
             }
         }
 
-        // Update payment status if provided
         if (isset($validated['payment_status'])) {
             $order->payment_status = $validated['payment_status'];
 
-            if ($validated['payment_status'] === 'paid' && ! $order->paid_at) {
+            if ($validated['payment_status'] === Order::PAYMENT_PAID && ! $order->paid_at) {
                 $order->paid_at = now();
             }
         }
 
-        // Update tracking number
-        if (isset($validated['tracking_number'])) {
+        if (array_key_exists('tracking_number', $validated)) {
             $order->tracking_number = $validated['tracking_number'];
         }
 
-        // Update admin note
+        // Legacy single note; new notes go through addNote()
         if (isset($validated['admin_note'])) {
             $order->admin_note = $validated['admin_note'];
         }
 
-        $releasesStock = in_array($order->status, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true)
-            && ! in_array($previousStatus, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true);
+        $releasesStock = in_array($order->status, $closed, true) && ! in_array($previousStatus, $closed, true);
+        // Reopening a cancelled order must take its items out of stock again
+        $reservesStock = in_array($previousStatus, $closed, true) && ! in_array($order->status, $closed, true);
+        $userId = $request->user()?->id;
 
-        DB::transaction(function () use ($order, $releasesStock) {
-            $order->save();
+        try {
+            DB::transaction(function () use ($order, $releasesStock, $reservesStock, $previousStatus, $previousPayment, $previousTracking, $userId) {
+                if ($reservesStock) {
+                    app(StockService::class)->reserve($order->quantities());
+                }
 
-            // Cancelled/refunded orders give their items back to stock (once)
-            if ($releasesStock) {
-                app(StockService::class)->release($order);
-            }
-        });
+                $order->save();
 
-        if ($releasesStock) {
+                if ($releasesStock) {
+                    app(StockService::class)->release($order);
+                }
+
+                if ($previousStatus !== $order->status) {
+                    $order->addNote("Status changed from {$this->statusLabel($previousStatus)} to {$order->getStatusLabel()}.", OrderNote::STATUS, $userId);
+                }
+                if ($previousPayment !== $order->payment_status) {
+                    $order->addNote("Payment marked as {$order->getPaymentStatusLabel()}.", OrderNote::PAYMENT, $userId);
+                }
+                if ($previousTracking !== $order->tracking_number && $order->tracking_number) {
+                    $order->addNote("Tracking number set to {$order->tracking_number}.", OrderNote::STATUS, $userId);
+                }
+            });
+        } catch (ValidationException $e) {
+            $message = 'Not enough stock to reopen this order: '.collect($e->errors())->flatten()->implode(' ');
+
+            return $request->wantsJson()
+                ? response()->json(['message' => $message, 'errors' => ['status' => [$message]]], 422)
+                : back()->with('error', $message);
+        }
+
+        if ($releasesStock || $reservesStock) {
             app(PostService::class)->flushCache();
         }
 
@@ -145,11 +171,75 @@ class OrderController
         if ($request->wantsJson()) {
             return response()->json([
                 'success' => true,
-                'order' => $this->transformForAdmin($order),
+                'order' => $this->transformForAdmin($order->fresh(['items', 'user', 'notes.user']), true),
             ]);
         }
 
-        return back()->with('success', 'Order updated successfully');
+        return back()->with('success', 'Order updated');
+    }
+
+    /**
+     * A note in the order's history, optionally emailed to the customer.
+     */
+    public function addNote(Request $request, Order $order): JsonResponse|RedirectResponse
+    {
+        $this->authorizeManage();
+
+        $data = $request->validate([
+            'message' => 'required|string|max:5000',
+            'notify_customer' => 'boolean',
+        ]);
+
+        $notify = (bool) ($data['notify_customer'] ?? false) && $order->customer_email;
+        $note = $order->addNote(trim($data['message']), OrderNote::NOTE, $request->user()?->id, (bool) $notify);
+
+        if ($notify) {
+            try {
+                Mail::to($order->customer_email)->send(new OrderNoteCustomer($order, $note->message));
+            } catch (\Throwable $e) {
+                logger()->error('Failed to send order note email: '.$e->getMessage());
+            }
+        }
+
+        return $request->wantsJson()
+            ? response()->json(['success' => true, 'note' => $this->transformNote($note->load('user'))], 201)
+            : back()->with('success', $notify ? 'Note added and emailed to the customer' : 'Note added');
+    }
+
+    /**
+     * Refund the full amount: at the provider for online payments, as a
+     * record only for cash and bank transfer (money goes back by hand).
+     */
+    public function refund(Request $request, Order $order): JsonResponse|RedirectResponse
+    {
+        $this->authorizeManage();
+
+        if (! $order->isPaid()) {
+            $message = 'Only paid orders can be refunded.';
+
+            return $request->wantsJson() ? response()->json(['error' => $message], 422) : back()->with('error', $message);
+        }
+
+        $payments = app(PaymentService::class);
+        $gateway = $payments->gateway($order->payment_method);
+
+        try {
+            if ($gateway?->isOnline()) {
+                $gateway->refund($order);
+            }
+        } catch (PaymentException $e) {
+            return $request->wantsJson() ? response()->json(['error' => $e->getMessage()], 422) : back()->with('error', $e->getMessage());
+        }
+
+        $payments->markRefunded($order, $gateway?->isOnline() ? "refunded via {$gateway->label()}" : 'marked as refunded');
+
+        $message = $gateway?->isOnline()
+            ? "Order refunded via {$gateway->label()}."
+            : 'Order marked as refunded. Send the money back to the customer yourself.';
+
+        return $request->wantsJson()
+            ? response()->json(['success' => true, 'message' => $message])
+            : back()->with('success', $message);
     }
 
     public function destroy(Request $request, Order $order): JsonResponse|RedirectResponse
@@ -238,6 +328,19 @@ class OrderController
                     'product_data' => $item->product_data,
                 ])->toArray(),
                 'updated_at' => $order->updated_at->toISOString(),
+                'notes' => $order->relationLoaded('notes') ? $order->notes->map(fn (OrderNote $note) => $this->transformNote($note))->all() : [],
+                'payments' => Payment::where('order_id', $order->id)->oldest('id')->get()->map(fn (Payment $payment) => [
+                    'id' => $payment->id,
+                    'gateway' => $payment->gateway,
+                    'provider_ref' => $payment->provider_ref,
+                    'status' => $payment->status,
+                    'amount' => $payment->amount,
+                    'currency' => $payment->currency,
+                    'created_at' => $payment->created_at?->toISOString(),
+                ])->all(),
+                'can_refund' => $order->isPaid(),
+                'invoice_url' => route('shop.order.invoice', ['orderNumber' => $order->order_number]),
+                'refunds_online' => (bool) app(PaymentService::class)->gateway($order->payment_method)?->isOnline(),
             ]);
         }
 
@@ -280,6 +383,26 @@ class OrderController
         }
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    protected function transformNote(OrderNote $note): array
+    {
+        return [
+            'id' => $note->id,
+            'type' => $note->type,
+            'message' => $note->message,
+            'customer_notified' => $note->customer_notified,
+            'author' => $note->user?->name,
+            'created_at' => $note->created_at?->toISOString(),
+        ];
+    }
+
+    protected function statusLabel(string $status): string
+    {
+        return (new Order(['status' => $status]))->getStatusLabel();
+    }
+
     protected function sendStatusEmails(Order $order, string $previousStatus): void
     {
         if (! $order->customer_email) {
@@ -299,6 +422,15 @@ class OrderController
                 Mail::to($order->customer_email)->send(new OrderCompletedCustomer($order));
             } catch (\Throwable $e) {
                 logger()->error('Failed to send order completed email: '.$e->getMessage());
+            }
+        }
+
+        // Refunds email from PaymentService::markRefunded, whichever way they happen
+        if ($order->status === Order::STATUS_CANCELLED && $previousStatus !== Order::STATUS_CANCELLED) {
+            try {
+                Mail::to($order->customer_email)->send(new OrderCancelledCustomer($order));
+            } catch (\Throwable $e) {
+                logger()->error('Failed to send order cancelled email: '.$e->getMessage());
             }
         }
     }

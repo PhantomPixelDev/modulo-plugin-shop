@@ -2,7 +2,20 @@
 
 Products, categories, cart and orders for Modulo CMS.
 
-A plugin for [Modulo CMS](https://github.com/PhantomPixelDev/modulo-cms).
+A plugin for [Modulo CMS](https://github.com/PhantomPixelDev/modulo-cms). Needs Modulo 0.2.0 or newer.
+
+## Features
+
+- Products with sale prices (optionally dated), gallery, categories, tags, weight and
+  **variations** (own SKU, price and stock).
+- Cart and guest checkout; **tax** (added or included), **shipping methods** with free-shipping
+  thresholds, and **coupons** (percent, fixed, free shipping; limits and dates).
+- **Payments:** cash on delivery, bank transfer, and **Stripe, PayPal and Mollie** through their
+  hosted pages (no card data on your server). Webhooks are verified; unpaid online orders
+  expire and return their stock.
+- Orders admin with status, tracking, refunds (at the provider), history and notes to the
+  customer; order, shipping, cancellation and refund emails; printable invoices.
+- Customer "My orders" page and remembered addresses.
 
 ## Install
 
@@ -28,7 +41,9 @@ API, just no public shop pages.
 1. Bump `version` in `plugin.json`.
 2. Tag it: `git tag vX.Y.Z && git push --tags`. The release workflow refuses a tag that
    does not match `plugin.json`, then publishes `modulo-shop-X.Y.Z.zip` and its `.sha256`.
-3. Update this plugin's entry in the registry with the new version, asset URL and checksum.
+3. The registry picks the release up within the hour.
+4. Copy the tagged files into `plugins/ModuloShop` in modulo-cms: its CI checks the bundled copy
+   matches this release.
 
 ## License
 
