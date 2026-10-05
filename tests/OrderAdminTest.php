@@ -1,6 +1,8 @@
 <?php
 
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
+use Plugins\ModuloShop\src\Http\Controllers\Admin\OrderController;
 use Plugins\ModuloShop\src\Mail\OrderCancelledCustomer;
 use Plugins\ModuloShop\src\Mail\OrderNoteCustomer;
 use Plugins\ModuloShop\src\Mail\OrderRefundedCustomer;
@@ -34,6 +36,49 @@ function orderManager(): void
 {
     test()->actingAs(makeAdminUserWithPermissions(['view shop orders', 'manage shop orders']));
 }
+
+it('does not release stock twice for admin requests bound to stale orders', function () {
+    [$order, $product] = placedOrder();
+    orderManager();
+    $stale = Order::findOrFail($order->id);
+    $request = Request::create('/dashboard/admin/shop/orders/'.$order->id, 'PUT', ['status' => 'cancelled']);
+    $request->headers->set('Accept', 'application/json');
+    $request->setUserResolver(fn () => auth()->user());
+    $controller = app(OrderController::class);
+
+    expect($controller->update($request, $order)->getStatusCode())->toBe(200);
+    expect($controller->update($request, $stale)->getStatusCode())->toBe(200);
+    expect($product->fresh()->meta_data['stock'])->toBe(5);
+    Mail::assertQueued(OrderCancelledCustomer::class, 1);
+});
+
+it('refuses a refund request bound before another refund completed', function () {
+    [$order, $product] = placedOrder();
+    app(PaymentService::class)->markPaid($order, 'cod', 'cash-stale', 20, 'USD');
+    $order->refresh();
+    $stale = Order::findOrFail($order->id);
+    orderManager();
+    $request = Request::create('/shop/refund', 'POST');
+    $request->headers->set('Accept', 'application/json');
+    $controller = app(OrderController::class);
+    expect($controller->refund($request, $order)->getStatusCode())->toBe(200);
+    expect($controller->refund($request, $stale)->getStatusCode())->toBe(422);
+    expect($product->fresh()->meta_data['stock'])->toBe(5);
+    Mail::assertQueued(OrderRefundedCustomer::class, 1);
+});
+
+it('does not delete a reopened order using stale cancelled state', function () {
+    [$order] = placedOrder();
+    orderManager();
+    $this->putJson(route('dashboard.admin.shop.orders.update', $order), ['status' => 'cancelled'])->assertOk();
+    $stale = $order->fresh();
+    $this->putJson(route('dashboard.admin.shop.orders.update', $order), ['status' => 'processing'])->assertOk();
+    $request = Request::create('/shop/order', 'DELETE');
+    $request->headers->set('Accept', 'application/json');
+    $controller = app(OrderController::class);
+    expect($controller->destroy($request, $stale)->getStatusCode())->toBe(400);
+    expect(Order::find($order->id)?->status)->toBe('processing');
+});
 
 it('records status changes in the history and emails a cancellation', function () {
     [$order, $product] = placedOrder();

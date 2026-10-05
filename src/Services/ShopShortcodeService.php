@@ -6,6 +6,7 @@ use App\Models\Post;
 use App\Models\PostType;
 use App\Models\Taxonomy;
 use App\Models\TaxonomyTerm;
+use App\Services\HtmlSanitizer;
 use App\Services\ShortcodeService;
 use Plugins\ModuloShop\src\Support\MetaSql;
 
@@ -24,7 +25,7 @@ class ShopShortcodeService
     protected function getProductType(): ?PostType
     {
         if ($this->productType === null) {
-            $this->productType = PostType::where('name', 'product')->first();
+            $this->productType = PostType::where('slug', 'product')->where('is_public', true)->first();
         }
 
         return $this->productType;
@@ -70,20 +71,20 @@ class ShopShortcodeService
             return '<!-- Product post type not found -->';
         }
 
-        $limit = (int) ($attrs['limit'] ?? 12);
+        $limit = min(max((int) ($attrs['limit'] ?? 12), 1), 60);
         $columns = (int) ($attrs['columns'] ?? 4);
         $category = $attrs['category'] ?? null;
         $orderby = $attrs['orderby'] ?? 'date';
         $order = strtolower($attrs['order'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
 
         $query = Post::where('post_type_id', $productType->id)
-            ->published()
-            ->with(['author', 'taxonomyTerms']);
+            ->published()->whereHas('postType', fn ($q) => $q->where('is_public', true))
+            ->with(['author', 'taxonomyTerms.taxonomy']);
 
         // Filter by category if specified
         if ($category) {
             $query->whereHas('taxonomyTerms', function ($q) use ($category) {
-                $q->where('slug', $category);
+                $q->where('slug', $category)->whereHas('taxonomy', fn ($t) => $t->where('slug', 'product-category')->where('is_public', true));
             });
         }
 
@@ -124,7 +125,7 @@ class ShopShortcodeService
             return '<!-- Product post type not found -->';
         }
 
-        $query = Post::where('post_type_id', $productType->id)->published();
+        $query = Post::where('post_type_id', $productType->id)->published()->whereHas('postType', fn ($q) => $q->where('is_public', true));
 
         if ($id) {
             $product = $query->where('id', $id)->first();
@@ -162,11 +163,11 @@ class ShopShortcodeService
             return '<!-- Product post type not found -->';
         }
 
-        $limit = (int) ($attrs['limit'] ?? 8);
+        $limit = min(max((int) ($attrs['limit'] ?? 8), 1), 60);
         $autoplay = ($attrs['autoplay'] ?? 'yes') === 'yes';
 
         $products = Post::where('post_type_id', $productType->id)
-            ->published()
+            ->published()->whereHas('postType', fn ($q) => $q->where('is_public', true))
             ->orderBy('published_at', 'desc')
             ->limit($limit)
             ->get();
@@ -190,15 +191,21 @@ class ShopShortcodeService
         $hideEmpty = ($attrs['hide_empty'] ?? 'yes') === 'yes';
 
         // Get product category taxonomy
-        $taxonomy = Taxonomy::where('slug', 'product-category')->first();
+        $taxonomy = Taxonomy::where('slug', 'product-category')->where('is_public', true)->first();
         if (! $taxonomy) {
             return '<!-- Product category taxonomy not found -->';
         }
 
-        $query = TaxonomyTerm::where('taxonomy_id', $taxonomy->id);
+        $productType = $this->getProductType();
+        if (! $productType) {
+            return '<!-- Product post type not found -->';
+        }
+
+        $visible = fn ($q) => $q->where('post_type_id', $productType->id)->published();
+        $query = TaxonomyTerm::where('taxonomy_id', $taxonomy->id)->withCount(['posts' => $visible]);
 
         if ($hideEmpty) {
-            $query->has('posts');
+            $query->whereHas('posts', $visible);
         }
 
         $categories = $query->orderBy('name')->get();
@@ -206,7 +213,7 @@ class ShopShortcodeService
         $html = '<ul class="product-categories list-none p-0">';
         foreach ($categories as $cat) {
             $url = url('/product-category/'.$cat->slug);
-            $count = $hideEmpty ? $cat->posts()->count() : '';
+            $count = $hideEmpty ? $cat->getAttribute('posts_count') : '';
             $html .= sprintf(
                 '<li class="mb-2"><a href="%s" class="text-gray-700 hover:text-primary-600">%s</a>%s</li>',
                 e($url),
@@ -229,11 +236,11 @@ class ShopShortcodeService
             return '<!-- Product post type not found -->';
         }
 
-        $limit = (int) ($attrs['limit'] ?? 4);
+        $limit = min(max((int) ($attrs['limit'] ?? 4), 1), 60);
         $columns = (int) ($attrs['columns'] ?? 4);
 
         $products = Post::where('post_type_id', $productType->id)
-            ->published()
+            ->published()->whereHas('postType', fn ($q) => $q->where('is_public', true))
             ->where('meta_data->featured', true)
             ->orderBy('published_at', 'desc')
             ->limit($limit)
@@ -252,11 +259,11 @@ class ShopShortcodeService
             return '<!-- Product post type not found -->';
         }
 
-        $limit = (int) ($attrs['limit'] ?? 4);
+        $limit = min(max((int) ($attrs['limit'] ?? 4), 1), 60);
         $columns = (int) ($attrs['columns'] ?? 4);
 
         $products = Post::where('post_type_id', $productType->id)
-            ->published()
+            ->published()->whereHas('postType', fn ($q) => $q->where('is_public', true))
             ->whereRaw(MetaSql::number('sale_price').' > 0')
             ->orderBy('published_at', 'desc')
             ->limit($limit)
@@ -298,7 +305,9 @@ class ShopShortcodeService
             return '<!-- Product ID required -->';
         }
 
-        $product = Post::find($id);
+        $productType = $this->getProductType();
+        $product = $productType ? Post::where('post_type_id', $productType->id)
+            ->published()->whereHas('postType', fn ($q) => $q->where('is_public', true))->find($id) : null;
         if (! $product) {
             return '<!-- Product not found -->';
         }
@@ -372,8 +381,9 @@ class ShopShortcodeService
         $sku = $meta['sku'] ?? '';
         $stock = $meta['stock'] ?? null;
 
-        $image = $product->featured_image ?: '/images/placeholder-product.jpg';
-        $url = url('/shop/'.$product->slug);
+        $image = e($product->featured_image ?: '/images/placeholder-product.jpg');
+        $url = e(url('/shop/'.$product->slug));
+        $title = e($product->title);
 
         $priceHtml = '';
         if ($salePrice && $salePrice < $price) {
@@ -398,12 +408,12 @@ class ShopShortcodeService
     {$stockBadge}
     <a href="{$url}" class="block">
         <div class="aspect-square overflow-hidden">
-            <img src="{$image}" alt="{$product->title}" class="w-full h-full object-cover hover:scale-105 transition-transform" loading="lazy">
+            <img src="{$image}" alt="{$title}" class="w-full h-full object-cover hover:scale-105 transition-transform" loading="lazy">
         </div>
     </a>
     <div class="p-4">
         <a href="{$url}" class="block">
-            <h4 class="font-semibold text-gray-800 hover:text-primary-600 mb-2 line-clamp-2">{$product->title}</h4>
+            <h4 class="font-semibold text-gray-800 hover:text-primary-600 mb-2 line-clamp-2">{$title}</h4>
         </a>
         <div class="flex items-center justify-between">
             <div class="product-price">{$priceHtml}</div>
@@ -426,10 +436,12 @@ HTML;
         $salePrice = $meta['sale_price'] ?? null;
         $currency = $meta['currency'] ?? 'USD';
         $currencySymbol = $this->getCurrencySymbol($currency);
-        $sku = $meta['sku'] ?? '';
-        $stock = $meta['stock'] ?? null;
+        $sku = e($meta['sku'] ?? '');
+        $stock = isset($meta['stock']) ? (int) $meta['stock'] : null;
 
-        $image = $product->featured_image ?: '/images/placeholder-product.jpg';
+        $image = e($product->featured_image ?: '/images/placeholder-product.jpg');
+        $title = e($product->title);
+        $content = app(HtmlSanitizer::class)->sanitize($product->content);
 
         $priceHtml = '';
         if ($showPrice) {
@@ -462,13 +474,13 @@ HTML;
         return <<<HTML
 <div class="product-single flex flex-col md:flex-row gap-8">
     <div class="product-image md:w-1/2">
-        <img src="{$image}" alt="{$product->title}" class="w-full rounded-lg shadow-md">
+        <img src="{$image}" alt="{$title}" class="w-full rounded-lg shadow-md">
     </div>
     <div class="product-details md:w-1/2">
-        <h2 class="text-3xl font-bold mb-4">{$product->title}</h2>
+        <h2 class="text-3xl font-bold mb-4">{$title}</h2>
         {$priceHtml}
         {$skuHtml}
-        <div class="product-description prose mb-6">{$product->content}</div>
+        <div class="product-description prose mb-6">{$content}</div>
         {$addToCartHtml}
     </div>
 </div>

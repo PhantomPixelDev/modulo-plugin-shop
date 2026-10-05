@@ -39,6 +39,17 @@ class ShopController
      */
     public function index(Request $request): JsonResponse|Response
     {
+        $request->validate([
+            'search' => 'nullable|string|max:1000',
+            'category' => 'nullable|string|max:255',
+            'tag' => 'nullable|string|max:255',
+            'order' => 'nullable|string|max:255',
+            'orderby' => 'nullable|string|max:255',
+            'min_price' => 'nullable|numeric',
+            'max_price' => 'nullable|numeric',
+            'per_page' => 'nullable|integer|min:1',
+        ]);
+
         $productType = $this->getProductType();
 
         if (! $productType) {
@@ -50,16 +61,17 @@ class ShopController
 
         $query = Post::where('post_type_id', $productType->id)
             ->published()
-            ->with(['author', 'taxonomyTerms']);
+            ->whereHas('postType', fn ($q) => $q->where('is_public', true))
+            ->with(['author', 'taxonomyTerms.taxonomy']);
 
         // Filter by category
         if ($category = $request->get('category')) {
-            $query->whereHas('taxonomyTerms', fn ($q) => $q->where('slug', $category));
+            $query->whereHas('taxonomyTerms', fn ($q) => $q->where('slug', $category)->whereHas('taxonomy', fn ($t) => $t->where('slug', 'product-category')->where('is_public', true)));
         }
 
         // Filter by tag
         if ($tag = $request->get('tag')) {
-            $query->whereHas('taxonomyTerms', fn ($q) => $q->where('slug', $tag));
+            $query->whereHas('taxonomyTerms', fn ($q) => $q->where('slug', $tag)->whereHas('taxonomy', fn ($t) => $t->where('slug', 'product-tag')->where('is_public', true)));
         }
 
         // Search
@@ -102,15 +114,15 @@ class ShopController
         $products = $query->paginate($perPage);
 
         // Get categories for sidebar
-        $categories = TaxonomyTerm::whereHas('taxonomy', fn ($q) => $q->where('slug', 'product-category'))
-            ->withCount(['posts' => fn ($q) => $q->where('post_type_id', $productType->id)->published()])
+        $categories = TaxonomyTerm::whereHas('taxonomy', fn ($q) => $q->where('slug', 'product-category')->where('is_public', true))
+            ->withCount(['posts' => fn ($q) => $q->where('post_type_id', $productType->id)->published()->whereHas('postType', fn ($t) => $t->where('is_public', true))])
             ->orderBy('name')
             ->get();
 
         if ($request->wantsJson()) {
             return response()->json([
-                'products' => $products,
-                'categories' => $categories,
+                'products' => $products->through(fn ($p) => $this->transformProduct($p)),
+                'categories' => $categories->map(fn ($t) => $t->only(['id', 'name', 'slug', 'posts_count'])),
             ]);
         }
 
@@ -154,7 +166,8 @@ class ShopController
         $product = Post::where('post_type_id', $productType->id)
             ->where('slug', $slug)
             ->published()
-            ->with(['author', 'taxonomyTerms'])
+            ->whereHas('postType', fn ($q) => $q->where('is_public', true))
+            ->with(['author', 'taxonomyTerms.taxonomy'])
             ->firstOrFail();
 
         // Query-builder increment: don't bump updated_at on every view
@@ -164,9 +177,11 @@ class ShopController
         $relatedProducts = Post::where('post_type_id', $productType->id)
             ->where('id', '!=', $product->id)
             ->published()
+            ->whereHas('postType', fn ($q) => $q->where('is_public', true))
             ->whereHas('taxonomyTerms', function ($q) use ($product) {
-                $q->whereIn('taxonomy_term_id', $product->taxonomyTerms->pluck('id'));
+                $q->whereIn('taxonomy_term_id', $product->taxonomyTerms->filter(fn ($t) => $t->taxonomy?->is_public)->pluck('id'));
             })
+            ->with(['author', 'taxonomyTerms.taxonomy'])
             ->limit(4)
             ->get();
 
@@ -189,23 +204,24 @@ class ShopController
      */
     public function category(Request $request, string $slug): JsonResponse|Response
     {
-        $category = TaxonomyTerm::whereHas('taxonomy', fn ($q) => $q->where('slug', 'product-category'))
+        $category = TaxonomyTerm::whereHas('taxonomy', fn ($q) => $q->where('slug', 'product-category')->where('is_public', true))
             ->where('slug', $slug)
             ->firstOrFail();
 
         $productType = $this->getProductType();
+        abort_if($productType === null || ! $productType->is_public, 404);
 
         $products = Post::where('post_type_id', $productType->id)
             ->published()
             ->whereHas('taxonomyTerms', fn ($q) => $q->where('id', $category->id))
-            ->with(['author', 'taxonomyTerms'])
+            ->with(['author', 'taxonomyTerms.taxonomy'])
             ->orderBy('published_at', 'desc')
             ->paginate(12);
 
         if ($request->wantsJson()) {
             return response()->json([
-                'category' => $category,
-                'products' => $products,
+                'category' => $category->only(['id', 'name', 'slug', 'description']),
+                'products' => $products->through(fn ($p) => $this->transformProduct($p)),
             ]);
         }
 
@@ -253,11 +269,11 @@ class ShopController
             'gallery' => $meta['gallery'] ?? [],
             'attributes' => $meta['attributes'] ?? [],
             'categories' => $product->taxonomyTerms
-                ->filter(fn ($t) => $t->taxonomy?->slug === 'product-category')
+                ->filter(fn ($t) => $t->taxonomy?->is_public && $t->taxonomy->slug === 'product-category')
                 ->values()
                 ->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'slug' => $t->slug]),
             'tags' => $product->taxonomyTerms
-                ->filter(fn ($t) => $t->taxonomy?->slug === 'product-tag')
+                ->filter(fn ($t) => $t->taxonomy?->is_public && $t->taxonomy->slug === 'product-tag')
                 ->values()
                 ->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'slug' => $t->slug]),
             'author' => $product->author ? [

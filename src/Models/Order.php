@@ -160,7 +160,7 @@ class Order extends Model
         ]);
     }
 
-    public function canBeViewedWith(?User $user, ?string $key): bool
+    public function canBeViewedWith(?User $user, mixed $key): bool
     {
         if ($user && $this->user_id && $user->id === $this->user_id) {
             return true;

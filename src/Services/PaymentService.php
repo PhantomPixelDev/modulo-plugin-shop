@@ -215,6 +215,16 @@ class PaymentService
                 return false;
             }
 
+            // A delayed/retried success must never undo a completed refund.
+            if ($locked->payment_status === Order::PAYMENT_REFUNDED || ($payment->exists && $payment->status === Payment::REFUNDED)) {
+                return false;
+            }
+
+            // Do not overwrite a successful attempt with stale or inconsistent data.
+            if ($payment->exists && $payment->status === Payment::PAID) {
+                return false;
+            }
+
             $payment->fill([
                 'order_id' => $locked->id,
                 'amount' => $amount,

@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Plugin;
+use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
@@ -54,6 +55,12 @@ function stripeSignature(string $payload, string $secret, ?int $time = null): st
 
     return "t={$time},v1=".hash_hmac('sha256', "{$time}.{$payload}", $secret);
 }
+
+it('rejects malformed Mollie webhook ids without contacting the provider', function () {
+    payWith('mollie', ['api_key' => 'test_abc']);
+    $this->postJson('/shop/payment/mollie/webhook', ['id' => ['invalid']])->assertStatus(400);
+    Http::assertNothingSent();
+});
 
 it('keeps cash on delivery as before: order placed, emails once, no payment page', function () {
     cartWith();
@@ -276,7 +283,7 @@ it('never sends saved API keys back to the admin screen', function () {
 it('lets payment providers reach the webhook without a CSRF token', function () {
     // CSRF checks are skipped in tests, so check the route's real middleware instead.
     // Resolving the HTTP kernel gives the router its middleware groups ("web").
-    app(Illuminate\Contracts\Http\Kernel::class);
+    app(Kernel::class);
     $route = app('router')->getRoutes()->getByName('shop.payment.webhook');
     $middleware = collect(app('router')->gatherRouteMiddleware($route))
         ->filter(fn ($name) => is_string($name) && preg_match('/Csrf|RequestForgery/', $name) === 1);

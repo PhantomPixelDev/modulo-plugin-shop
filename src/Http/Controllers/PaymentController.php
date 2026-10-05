@@ -54,7 +54,8 @@ class PaymentController
     public function pay(Request $request, string $orderNumber): RedirectResponse
     {
         $order = $this->order($request, $orderNumber);
-        $method = (string) $request->input('payment_method', $order->payment_method);
+        $validated = $request->validate(['payment_method' => 'nullable|string|max:64']);
+        $method = $validated['payment_method'] ?? $order->payment_method;
 
         if ($order->isPaid() || $order->status !== Order::STATUS_PENDING) {
             return redirect()->to($order->confirmationUrl());

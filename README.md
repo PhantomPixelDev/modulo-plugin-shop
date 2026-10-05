@@ -32,6 +32,12 @@ before anything is unpacked.
 
 ## Storefront
 
+As of 1.8.0, catalog JSON uses the same public product fields as the storefront
+(`price`, `sale_price`, `categories`, etc.). It no longer serializes the full Post
+model or arbitrary `meta_data`; clients reading `meta_data.price` should use `price`.
+Private product types and taxonomies are excluded from public routes and shortcodes.
+Catalog filters must be scalar values; malformed filters return validation errors.
+
 The storefront pages are rendered by the active theme; the default `modern-react`
 theme in core ships them. A theme without shop templates still gets the admin and the
 API, just no public shop pages.

@@ -93,43 +93,45 @@ class OrderController
             'admin_note' => 'nullable|string|max:2000',
         ]);
 
-        $closed = [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED];
-        $previousStatus = $order->status;
-        $previousPayment = $order->payment_status;
-        $previousTracking = $order->tracking_number;
-
-        if (isset($validated['status'])) {
-            $order->status = $validated['status'];
-
-            if (in_array($validated['status'], [Order::STATUS_SHIPPED, Order::STATUS_COMPLETED], true) && ! $order->shipped_at) {
-                $order->shipped_at = now();
-            }
-        }
-
-        if (isset($validated['payment_status'])) {
-            $order->payment_status = $validated['payment_status'];
-
-            if ($validated['payment_status'] === Order::PAYMENT_PAID && ! $order->paid_at) {
-                $order->paid_at = now();
-            }
-        }
-
-        if (array_key_exists('tracking_number', $validated)) {
-            $order->tracking_number = $validated['tracking_number'];
-        }
-
-        // Legacy single note; new notes go through addNote()
-        if (isset($validated['admin_note'])) {
-            $order->admin_note = $validated['admin_note'];
-        }
-
-        $releasesStock = in_array($order->status, $closed, true) && ! in_array($previousStatus, $closed, true);
-        // Reopening a cancelled order must take its items out of stock again
-        $reservesStock = in_array($previousStatus, $closed, true) && ! in_array($order->status, $closed, true);
         $userId = $request->user()?->id;
-
         try {
-            DB::transaction(function () use ($order, $releasesStock, $reservesStock, $previousStatus, $previousPayment, $previousTracking, $userId) {
+            $changes = DB::transaction(function () use ($order, $validated, $userId) {
+                // Route binding can predate another admin request or webhook.
+                $order = Order::whereKey($order->id)->lockForUpdate()->firstOrFail();
+                $closed = [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED];
+                $previousStatus = $order->status;
+                $previousPayment = $order->payment_status;
+                $previousTracking = $order->tracking_number;
+
+                if (isset($validated['status'])) {
+                    $order->status = $validated['status'];
+
+                    if (in_array($validated['status'], [Order::STATUS_SHIPPED, Order::STATUS_COMPLETED], true) && ! $order->shipped_at) {
+                        $order->shipped_at = now();
+                    }
+                }
+
+                if (isset($validated['payment_status'])) {
+                    $order->payment_status = $validated['payment_status'];
+
+                    if ($validated['payment_status'] === Order::PAYMENT_PAID && ! $order->paid_at) {
+                        $order->paid_at = now();
+                    }
+                }
+
+                if (array_key_exists('tracking_number', $validated)) {
+                    $order->tracking_number = $validated['tracking_number'];
+                }
+
+                // Legacy single note; new notes go through addNote()
+                if (isset($validated['admin_note'])) {
+                    $order->admin_note = $validated['admin_note'];
+                }
+
+                $releasesStock = in_array($order->status, $closed, true) && ! in_array($previousStatus, $closed, true);
+                // Reopening a cancelled order must take its items out of stock again
+                $reservesStock = in_array($previousStatus, $closed, true) && ! in_array($order->status, $closed, true);
+
                 if ($reservesStock) {
                     app(StockService::class)->reserve($order->quantities());
                 }
@@ -149,7 +151,13 @@ class OrderController
                 if ($previousTracking !== $order->tracking_number && $order->tracking_number) {
                     $order->addNote("Tracking number set to {$order->tracking_number}.", OrderNote::STATUS, $userId);
                 }
+
+                return compact('order', 'previousStatus', 'releasesStock', 'reservesStock');
             });
+            $order = $changes['order'];
+            $previousStatus = $changes['previousStatus'];
+            $releasesStock = $changes['releasesStock'];
+            $reservesStock = $changes['reservesStock'];
         } catch (ValidationException $e) {
             $message = 'Not enough stock to reopen this order: '.collect($e->errors())->flatten()->implode(' ');
 
@@ -212,24 +220,25 @@ class OrderController
     {
         $this->authorizeManage();
 
-        if (! $order->isPaid()) {
-            $message = 'Only paid orders can be refunded.';
-
-            return $request->wantsJson() ? response()->json(['error' => $message], 422) : back()->with('error', $message);
-        }
-
         $payments = app(PaymentService::class);
-        $gateway = $payments->gateway($order->payment_method);
 
         try {
-            if ($gateway?->isOnline()) {
-                $gateway->refund($order);
-            }
+            $gateway = DB::transaction(function () use ($order, $payments) {
+                $order = Order::whereKey($order->id)->lockForUpdate()->firstOrFail();
+                if (! $order->isPaid()) {
+                    throw new PaymentException('Only paid orders can be refunded.');
+                }
+                $gateway = $payments->gateway($order->payment_method);
+                if ($gateway?->isOnline()) {
+                    $gateway->refund($order);
+                }
+                $payments->markRefunded($order, $gateway?->isOnline() ? "refunded via {$gateway->label()}" : 'marked as refunded');
+
+                return $gateway;
+            });
         } catch (PaymentException $e) {
             return $request->wantsJson() ? response()->json(['error' => $e->getMessage()], 422) : back()->with('error', $e->getMessage());
         }
-
-        $payments->markRefunded($order, $gateway?->isOnline() ? "refunded via {$gateway->label()}" : 'marked as refunded');
 
         $message = $gateway?->isOnline()
             ? "Order refunded via {$gateway->label()}."
@@ -244,8 +253,18 @@ class OrderController
     {
         $this->authorizeManage();
 
-        // Only allow deletion of cancelled orders
-        if (! in_array($order->status, ['cancelled', 'refunded'])) {
+        $deleted = DB::transaction(function () use ($order) {
+            $order = Order::whereKey($order->id)->lockForUpdate()->firstOrFail();
+            if (! in_array($order->status, [Order::STATUS_CANCELLED, Order::STATUS_REFUNDED], true)) {
+                return false;
+            }
+            $order->items()->delete();
+            $order->delete();
+
+            return true;
+        });
+
+        if (! $deleted) {
             if ($request->wantsJson()) {
                 return response()->json([
                     'success' => false,
@@ -255,9 +274,6 @@ class OrderController
 
             return back()->withErrors(['error' => 'Only cancelled or refunded orders can be deleted']);
         }
-
-        $order->items()->delete();
-        $order->delete();
 
         if ($request->wantsJson()) {
             return response()->json(['success' => true]);

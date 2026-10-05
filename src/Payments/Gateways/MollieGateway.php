@@ -91,7 +91,10 @@ class MollieGateway extends AbstractGateway
 
     public function handleWebhook(Request $request): Response
     {
-        $id = (string) $request->input('id', '');
+        $id = $request->input('id', '');
+        if (! is_string($id)) {
+            return response('Invalid payment id', 400);
+        }
 
         // Unknown ids get a 200 too, so the endpoint can't be used to probe
         if (preg_match('/^tr_[A-Za-z0-9]+$/', $id) === 1) {

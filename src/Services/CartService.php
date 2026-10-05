@@ -340,6 +340,7 @@ class CartService
             ? Post::whereIn('id', $missing)
                 ->where('post_type_id', $this->productType->id)
                 ->published()
+                ->whereHas('postType', fn ($q) => $q->where('is_public', true))
                 ->get()
                 ->keyBy('id')
             : collect();

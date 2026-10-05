@@ -11,7 +11,7 @@ beforeEach(function () {
 function productPrices($response): array
 {
     return collect($response->json('products.data'))
-        ->map(fn ($p) => (float) $p['meta_data']['price'])
+        ->map(fn ($p) => (float) $p['price'])
         ->all();
 }
 
