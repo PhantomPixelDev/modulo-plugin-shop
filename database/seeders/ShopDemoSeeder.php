@@ -12,11 +12,22 @@ use Illuminate\Database\Seeder;
 /**
  * Demo products for the shop archive (/shop). Posts of type 'product' carry
  * their sellable data in meta_data, matching ProductData.
+ *
+ * Idempotent (keyed by slug), but refuses production like the core demo
+ * seeder: it exists so fresh dev installs have something to look at.
  */
 class ShopDemoSeeder extends Seeder
 {
     public function run(): void
     {
+        // Defense in depth: the provider only auto-runs this outside
+        // production, but the entry point must refuse there too.
+        if (app()->isProduction()) {
+            $this->command?->warn('ShopDemoSeeder refuses to run in production.');
+
+            return;
+        }
+
         $productType = PostType::where('slug', 'product')->first();
 
         if (! $productType) {

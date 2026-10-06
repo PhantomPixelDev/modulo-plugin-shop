@@ -6,6 +6,7 @@ use App\Models\PostType;
 use App\Plugins\BasePluginServiceProvider;
 use App\Services\ShortcodeService;
 use Illuminate\Console\Scheduling\Schedule;
+use Plugins\ModuloShop\database\seeders\ShopDemoSeeder;
 use Plugins\ModuloShop\database\seeders\ShopSeeder;
 use Plugins\ModuloShop\src\Console\ExpireUnpaidOrders;
 use Plugins\ModuloShop\src\Services\CartService;
@@ -82,6 +83,14 @@ class ModuloShopServiceProvider extends BasePluginServiceProvider
                 $seeder = new ShopSeeder;
                 $seeder->setContainer($this->app);
                 $seeder->run();
+
+                // Fresh setup outside production gets demo products too, so a
+                // new install has something to look at. Idempotent by slug.
+                if (! $this->app->isProduction()) {
+                    $demo = new ShopDemoSeeder;
+                    $demo->setContainer($this->app);
+                    $demo->run();
+                }
             } catch (\Exception $e) {
                 logger()->warning('Failed to seed shop data: '.$e->getMessage());
             }
