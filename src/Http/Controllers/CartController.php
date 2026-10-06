@@ -2,6 +2,7 @@
 
 namespace Plugins\ModuloShop\src\Http\Controllers;
 
+use App\Models\Post;
 use App\Services\ReactTemplateRenderer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -60,6 +61,13 @@ class CartController
                 'message' => 'Product added to cart',
                 'cart' => $cart,
                 'totals' => $this->cartService->getTotals($cart),
+                'item_count' => $cart['item_count'] ?? 0,
+                'added' => [
+                    'product_id' => $validated['product_id'],
+                    'quantity' => $validated['quantity'] ?? 1,
+                    'variant_id' => $validated['variant_id'] ?? null,
+                    'product_name' => Post::whereKey($validated['product_id'])->first(['title'])?->title,
+                ],
             ]);
         } catch (\InvalidArgumentException $e) {
             return response()->json([

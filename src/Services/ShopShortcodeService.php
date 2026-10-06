@@ -285,12 +285,14 @@ class ShopShortcodeService
         $text = $attrs['text'] ?? 'Add to Cart';
         $class = $attrs['class'] ?? 'bg-primary-600 text-white px-4 py-2 rounded hover:bg-primary-700';
         $quantity = (int) ($attrs['quantity'] ?? 1);
+        $title = Post::whereKey((int) $id)->first(['title'])?->title;
 
         return sprintf(
-            '<button type="button" class="add-to-cart-btn %s" data-product-id="%d" data-quantity="%d">%s</button>',
+            '<button type="button" class="add-to-cart-btn %s" data-product-id="%d" data-quantity="%d"%s>%s</button>',
             e($class),
             (int) $id,
             $quantity,
+            $title !== null ? ' data-product-title="'.e($title).'"' : '',
             e($text)
         );
     }
@@ -418,7 +420,7 @@ class ShopShortcodeService
         <div class="flex items-center justify-between">
             <div class="product-price">{$priceHtml}</div>
         </div>
-        <button type="button" class="add-to-cart-btn mt-3 w-full bg-primary-600 text-white py-2 rounded hover:bg-primary-700 transition-colors" data-product-id="{$product->id}">
+        <button type="button" class="add-to-cart-btn mt-3 w-full bg-primary-600 text-white py-2 rounded hover:bg-primary-700 transition-colors" data-product-id="{$product->id}" data-product-title="{$title}">
             Add to Cart
         </button>
     </div>
@@ -459,8 +461,8 @@ HTML;
         if ($showAddToCart && ($stock === null || $stock > 0)) {
             $addToCartHtml = <<<HTML
 <div class="add-to-cart-form flex items-center gap-4 mb-4">
-    <input type="number" value="1" min="1" max="{$stock}" class="quantity-input w-20 px-3 py-2 border rounded">
-    <button type="button" class="add-to-cart-btn bg-primary-600 text-white px-6 py-2 rounded hover:bg-primary-700" data-product-id="{$product->id}">
+    <input type="number" value="1" min="1" max="{$stock}" class="quantity-input w-20 px-3 py-2 border rounded" aria-label="Quantity">
+    <button type="button" class="add-to-cart-btn bg-primary-600 text-white px-6 py-2 rounded hover:bg-primary-700" data-product-id="{$product->id}" data-product-title="{$title}">
         Add to Cart
     </button>
 </div>
