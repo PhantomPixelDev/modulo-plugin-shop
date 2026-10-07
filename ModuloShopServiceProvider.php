@@ -2,7 +2,9 @@
 
 namespace Plugins\ModuloShop;
 
+use App\Models\Post;
 use App\Models\PostType;
+use App\Models\User;
 use App\Plugins\BasePluginServiceProvider;
 use App\Services\ShortcodeService;
 use Illuminate\Console\Scheduling\Schedule;
@@ -83,17 +85,42 @@ class ModuloShopServiceProvider extends BasePluginServiceProvider
                 $seeder = new ShopSeeder;
                 $seeder->setContainer($this->app);
                 $seeder->run();
-
-                // Fresh setup outside production gets demo products too, so a
-                // new install has something to look at. Idempotent by slug.
-                if (! $this->app->isProduction()) {
-                    $demo = new ShopDemoSeeder;
-                    $demo->setContainer($this->app);
-                    $demo->run();
-                }
             } catch (\Exception $e) {
                 logger()->warning('Failed to seed shop data: '.$e->getMessage());
+
+                return;
             }
+        }
+
+        $this->ensureDemoProducts();
+    }
+
+    /**
+     * Backfill demo products on non-production setups that have none yet.
+     * Runs until products exist, so ordering (admin created after the plugin
+     * boots) cannot strand an install without demo content. Idempotent.
+     */
+    protected function ensureDemoProducts(): void
+    {
+        if ($this->app->isProduction()) {
+            return;
+        }
+
+        $productType = PostType::where('slug', 'product')->first();
+        if (! $productType || ! User::query()->exists()) {
+            return;
+        }
+
+        if (Post::where('post_type_id', $productType->id)->exists()) {
+            return;
+        }
+
+        try {
+            $demo = new ShopDemoSeeder;
+            $demo->setContainer($this->app);
+            $demo->run();
+        } catch (\Exception $e) {
+            logger()->warning('Failed to seed shop demo products: '.$e->getMessage());
         }
     }
 }

@@ -37,6 +37,12 @@ class ShopDemoSeeder extends Seeder
         }
 
         $authorId = User::value('id');
+        if (! $authorId) {
+            $this->command?->warn('ShopDemoSeeder needs at least one user to own the products; skipping.');
+
+            return;
+        }
+
         $taxonomy = Taxonomy::where('slug', 'product-category')->first();
 
         if ($taxonomy) {
