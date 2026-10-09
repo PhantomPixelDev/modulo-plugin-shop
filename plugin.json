@@ -2,9 +2,9 @@
   "name": "Modulo Shop",
   "slug": "modulo-shop",
   "namespace": "ModuloShop",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "requires": {
-    "core": ">=0.3.0"
+    "core": ">=0.4.1"
   },
   "description": "A feature-rich e-commerce plugin for Modulo CMS.",
   "author": "Modulo CMS",

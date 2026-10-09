@@ -22,6 +22,7 @@ use Plugins\ModuloShop\src\Payments\Gateways\MollieGateway;
 use Plugins\ModuloShop\src\Payments\Gateways\PayPalGateway;
 use Plugins\ModuloShop\src\Payments\Gateways\StripeGateway;
 use Plugins\ModuloShop\src\Payments\Money;
+use Plugins\ModuloShop\src\Payments\PaymentException;
 use Plugins\ModuloShop\src\Payments\PaymentGateway;
 
 /**
@@ -76,7 +77,7 @@ class PaymentService
     /** Switched on and able to take payments: what checkout offers. @return array<string, PaymentGateway> */
     public function available(): array
     {
-        return array_filter($this->all(), fn (PaymentGateway $g) => $this->isEnabled($g->id()) && $g->isConfigured());
+        return array_filter($this->all(), fn (PaymentGateway $g) => $this->isEnabled($g->id()) && $g->isConfigured() && (! config('demo.enabled') || ! $g->isOnline()));
     }
 
     /**
@@ -154,6 +155,9 @@ class PaymentService
      */
     public function start(Order $order, PaymentGateway $gateway): string
     {
+        if (config('demo.enabled') && $gateway->isOnline()) {
+            throw new PaymentException('Online payments are disabled on the public demo.');
+        }
         $params = ['gateway' => $gateway->id(), 'orderNumber' => $order->order_number, 'key' => $order->access_token];
 
         return $gateway->start(

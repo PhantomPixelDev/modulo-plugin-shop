@@ -20,6 +20,9 @@ class InvoiceController
         $order = Order::where('order_number', $orderNumber)->with('items')->firstOrFail();
         $user = $request->user();
         $staff = $user !== null && ($user->can('view shop orders') || $user->hasRole(['admin', 'super-admin']));
+        if ($staff && config('security.require_two_factor_for_admins') && $user->hasRole(['admin', 'super-admin']) && ! $user->hasTwoFactorEnabled()) {
+            $staff = false;
+        }
 
         abort_unless($staff || $order->canBeViewedWith($user, $request->query('key')), 404);
 

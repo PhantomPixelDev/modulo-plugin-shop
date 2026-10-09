@@ -103,7 +103,7 @@ Route::get('/product-category/{slug}', [ShopController::class, 'category'])
     ->name('shop.category');
 
 // Admin shop routes
-Route::middleware(['auth', 'verified', 'role_or_permission:super-admin|admin|access admin'])
+Route::middleware(array_key_exists('admin.access', Route::getMiddlewareGroups()) ? 'admin.access' : ['auth', 'verified', 'role_or_permission:super-admin|admin|access admin', 'two-factor.admin'])
     ->prefix('dashboard/admin/shop')
     ->name('dashboard.admin.shop.')
     ->group(function () {

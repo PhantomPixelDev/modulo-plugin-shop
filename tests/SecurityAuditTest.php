@@ -17,6 +17,26 @@ beforeEach(function () {
     Mail::fake();
 });
 
+it('requires administrator two-factor enrollment on shop routes', function () {
+    config(['security.require_two_factor_for_admins' => true]);
+    $admin = makeAdminUserWithPermissions(['view shop orders']);
+    Spatie\Permission\Models\Role::findOrCreate('admin', 'web');
+    $admin->assignRole('admin');
+    $this->actingAs($admin)->get('/dashboard/admin/shop/orders')->assertRedirect(route('two-factor.edit'));
+    $this->getJson('/dashboard/admin/shop/orders')->assertForbidden()->assertJsonPath('code', 'two_factor_required');
+});
+
+it('blocks payment administration and online gateway initiation in the public demo', function () {
+    config(['demo.enabled' => true]);
+    $admin = makeAdminUserWithPermissions(['view shop orders']);
+    $this->actingAs($admin)->get('/dashboard/admin/shop/payments')->assertForbidden();
+    app(PaymentService::class)->saveSettings('stripe', true, ['secret_key' => 'sk_test_example', 'publishable_key' => 'pk_test_example']);
+    expect(array_keys(app(PaymentService::class)->available()))->not->toContain('stripe');
+    $order = new Order;
+    expect(fn () => app(PaymentService::class)->start($order, app(PaymentService::class)->gateway('stripe')))
+        ->toThrow(Plugins\ModuloShop\src\Payments\PaymentException::class, 'Online payments are disabled');
+});
+
 it('keeps private product types out of the catalog cart and shortcodes', function () {
     $product = createShopProduct();
     $product->postType->update(['is_public' => false]);
