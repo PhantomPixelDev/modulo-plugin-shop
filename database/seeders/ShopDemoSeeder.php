@@ -13,8 +13,8 @@ use Illuminate\Database\Seeder;
  * Demo products for the shop archive (/shop). Posts of type 'product' carry
  * their sellable data in meta_data, matching ProductData.
  *
- * Idempotent (keyed by slug), but refuses production like the core demo
- * seeder: it exists so fresh dev installs have something to look at.
+ * Three fixtures: regular price, sale price, and sold out. Production requires
+ * the core's explicitly authorized disposable demo command.
  */
 class ShopDemoSeeder extends Seeder
 {
@@ -22,7 +22,7 @@ class ShopDemoSeeder extends Seeder
     {
         // Defense in depth: the provider only auto-runs this outside
         // production, but the entry point must refuse there too.
-        if (app()->isProduction()) {
+        if (app()->isProduction() && (! config('demo.enabled') || ! config('demo.seeding_authorized'))) {
             $this->command?->warn('ShopDemoSeeder refuses to run in production.');
 
             return;
@@ -46,7 +46,7 @@ class ShopDemoSeeder extends Seeder
         $taxonomy = Taxonomy::where('slug', 'product-category')->first();
 
         if ($taxonomy) {
-            foreach (['stationery' => 'Stationery', 'kitchen' => 'Kitchen', 'apparel' => 'Apparel', 'accessories' => 'Accessories', 'home' => 'Home'] as $slug => $name) {
+            foreach (['stationery' => 'Stationery', 'kitchen' => 'Kitchen', 'apparel' => 'Apparel'] as $slug => $name) {
                 TaxonomyTerm::firstOrCreate(
                     ['slug' => $slug, 'taxonomy_id' => $taxonomy->id],
                     ['name' => $name],
@@ -59,17 +59,14 @@ class ShopDemoSeeder extends Seeder
             ->keyBy('slug');
 
         $products = [
-            ['title' => 'Field Notebook A5', 'slug' => 'field-notebook-a5', 'price' => 14.0, 'stock' => 120, 'category' => 'stationery', 'excerpt' => 'A dotted A5 notebook with sturdy 120gsm paper.'],
-            ['title' => 'Ceramic Mug — Sand', 'slug' => 'ceramic-mug-sand', 'price' => 22.0, 'stock' => 64, 'category' => 'kitchen', 'excerpt' => 'Hand-thrown stoneware mug, matte sand finish.'],
-            ['title' => 'Merino Wool Scarf', 'slug' => 'merino-wool-scarf', 'price' => 48.0, 'stock' => 32, 'category' => 'apparel', 'excerpt' => 'Soft merino scarf woven in limited seasonal colorways.'],
-            ['title' => 'Canvas Tote Bag', 'slug' => 'canvas-tote-bag', 'price' => 34.0, 'stock' => 90, 'category' => 'accessories', 'excerpt' => 'Heavy 16oz canvas everyday tote with reinforced straps.'],
-            ['title' => 'Desk Lamp — Brass', 'slug' => 'desk-lamp-brass', 'price' => 89.0, 'stock' => 18, 'category' => 'home', 'excerpt' => 'Dimmable brass desk lamp with a warm 2700K LED.'],
-            ['title' => 'Travel Wallet', 'slug' => 'travel-wallet', 'price' => 42.0, 'stock' => 45, 'category' => 'accessories', 'excerpt' => 'Passport-sized leather travel wallet with RFID slots.'],
+            ['title' => 'Field Notebook A5', 'slug' => 'field-notebook-a5', 'price' => 14.0, 'stock' => 12, 'category' => 'stationery', 'excerpt' => 'A demo product at its regular price.'],
+            ['title' => 'Ceramic Mug — Sand', 'slug' => 'ceramic-mug-sand', 'price' => 22.0, 'sale_price' => 18.0, 'stock' => 6, 'category' => 'kitchen', 'excerpt' => 'A demo product with an active sale price.'],
+            ['title' => 'Merino Wool Scarf', 'slug' => 'merino-wool-scarf', 'price' => 48.0, 'stock' => 0, 'category' => 'apparel', 'excerpt' => 'A sold-out demo product for testing stock limits.'],
         ];
 
         foreach ($products as $product) {
             $post = Post::updateOrCreate(
-                ['slug' => $product['slug']],
+                ['slug' => $product['slug'], 'post_type_id' => $productType->id],
                 [
                     'post_type_id' => $productType->id,
                     'author_id' => $authorId,
@@ -77,11 +74,12 @@ class ShopDemoSeeder extends Seeder
                     'excerpt' => $product['excerpt'],
                     'content' => '<p>'.$product['excerpt'].'</p>',
                     'status' => 'published',
-                    'published_at' => now()->subDays(random_int(1, 30)),
+                    'published_at' => now()->subDay(),
                     'meta_title' => $product['title'],
                     'meta_description' => $product['excerpt'],
                     'meta_data' => [
                         'price' => $product['price'],
+                        'sale_price' => $product['sale_price'] ?? null,
                         'stock' => $product['stock'],
                         'currency' => 'USD',
                     ],
@@ -89,7 +87,7 @@ class ShopDemoSeeder extends Seeder
             );
 
             if ($category = $categories->get($product['category'])) {
-                $post->taxonomyTerms()->syncWithoutDetaching([$category->id]);
+                $post->taxonomyTerms()->sync([$category->id]);
             }
         }
 

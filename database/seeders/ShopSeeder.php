@@ -49,15 +49,15 @@ class ShopSeeder extends Seeder
                     'menu_icon' => 'shopping-bag',
                     'menu_position' => 25,
                     'slug' => 'product',
-                    'supports' => json_encode([
+                    'supports' => [
                         'title',
                         'editor',
                         'excerpt',
                         'thumbnail',
                         'custom-fields',
                         'revisions',
-                    ]),
-                    'taxonomies' => json_encode(['product-category', 'product-tag']),
+                    ],
+                    'taxonomies' => ['product-category', 'product-tag'],
                 ]
             );
         }
@@ -72,7 +72,7 @@ class ShopSeeder extends Seeder
                 'description' => 'Categorize your products',
                 'is_hierarchical' => true,
                 'is_public' => true,
-                'post_types' => json_encode(['product']),
+                'post_types' => ['product'],
             ]
         );
 
@@ -86,7 +86,7 @@ class ShopSeeder extends Seeder
                 'description' => 'Tag your products',
                 'is_hierarchical' => false,
                 'is_public' => true,
-                'post_types' => json_encode(['product']),
+                'post_types' => ['product'],
             ]
         );
 

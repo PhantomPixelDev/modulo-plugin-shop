@@ -2,6 +2,12 @@
 
 Products, categories, cart and orders for Modulo CMS.
 
+Demo seeding creates three products: a notebook at regular price, a mug on sale,
+and a sold-out scarf. Reseeding updates these fixtures without adding duplicates.
+On a production demo it runs only through the core's explicitly authorized
+`MODULO_DEMO=true` / `modulo:seed-demo --force` flow. Normal production shops do
+not receive sample products. See the core [demo testing guide](https://github.com/PhantomPixelDev/modulo-cms/blob/main/docs/demo-testing.md).
+
 A plugin for [Modulo CMS](https://github.com/PhantomPixelDev/modulo-cms). Needs Modulo 0.3.0 or newer.
 
 ## Features
