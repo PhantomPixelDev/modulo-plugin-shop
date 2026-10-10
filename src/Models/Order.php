@@ -60,6 +60,7 @@ class Order extends Model
     protected $table = 'shop_orders';
 
     protected $fillable = [
+        'checkout_key',
         'order_number',
         'user_id',
         'status',
@@ -130,7 +131,7 @@ class Order extends Model
 
     public const PAYMENT_REFUNDED = 'refunded';
 
-    protected $hidden = ['access_token'];
+    protected $hidden = ['access_token', 'checkout_key'];
 
     protected static function booted(): void
     {

@@ -7,10 +7,14 @@ use App\Models\User;
 use App\Services\PostService;
 use App\Services\ReactTemplateRenderer;
 use App\Services\SiteSettingsService;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Response;
@@ -27,6 +31,21 @@ use Plugins\ModuloShop\src\Services\StockService;
 
 class CheckoutController
 {
+    private string $checkoutKey;
+
+    private string $checkoutFingerprint;
+
+    protected function checkoutToken(Request $request): string
+    {
+        $token = $request->session()->get('shop_checkout_token');
+        if (! is_string($token)) {
+            $token = (string) Str::uuid();
+            $request->session()->put('shop_checkout_token', $token);
+        }
+
+        return $token;
+    }
+
     protected CartService $cartService;
 
     protected ReactTemplateRenderer $reactRenderer;
@@ -71,6 +90,7 @@ class CheckoutController
                 'payment_methods' => $this->paymentMethods(),
                 'saved_address' => $user ? $this->savedAddress($user) : null,
                 'terms_url' => $this->termsUrl(),
+                'checkout_key' => $this->checkoutToken($request),
             ]);
         }
 
@@ -86,6 +106,7 @@ class CheckoutController
             'payment_methods' => $this->paymentMethods(),
             'saved_address' => $user ? $this->savedAddress($user) : null,
             'terms_url' => $this->termsUrl(),
+            'checkout_key' => $this->checkoutToken($request),
         ]);
     }
 
@@ -129,6 +150,40 @@ class CheckoutController
     }
 
     public function store(Request $request): JsonResponse|RedirectResponse
+    {
+        $request->validate(['checkout_key' => ['nullable', 'uuid']]);
+        $token = $request->input('checkout_key') ?? $this->checkoutToken($request);
+        $this->checkoutKey = hash('sha256', $request->session()->getId().'|'.$token);
+        $payload = $request->except(['_token', 'checkout_key']);
+        ksort($payload);
+        $this->checkoutFingerprint = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+
+        try {
+            return Cache::lock('shop-checkout:'.$this->checkoutKey, 120)->block(5, function () use ($request) {
+                $existing = Order::query()->where('checkout_key', $this->checkoutKey)->first();
+                if ($existing !== null) {
+                    return $this->replay($request, $existing);
+                }
+
+                return $this->process($request);
+            });
+        } catch (LockTimeoutException) {
+            abort(409, 'This checkout is still processing. Retry the same submission shortly.');
+        }
+    }
+
+    private function replay(Request $request, Order $order): JsonResponse|RedirectResponse
+    {
+        if (($order->meta_data['checkout_fingerprint'] ?? null) !== $this->checkoutFingerprint) {
+            abort(409, 'This checkout was already submitted with different details. Open a new checkout.');
+        }
+
+        return $request->wantsJson()
+            ? response()->json(['success' => true, 'order' => ['id' => $order->id, 'order_number' => $order->order_number, 'total' => $order->total, 'currency' => $order->currency], 'redirect' => $order->confirmationUrl()])
+            : redirect()->to($order->confirmationUrl());
+    }
+
+    protected function process(Request $request): JsonResponse|RedirectResponse
     {
         if ($closed = $this->closedResponse($request)) {
             return $closed;
@@ -200,6 +255,7 @@ class CheckoutController
                 }
 
                 $order = Order::create([
+                    'checkout_key' => $this->checkoutKey,
                     'order_number' => Order::generateOrderNumber(),
                     'user_id' => $request->user()?->id,
                     'status' => Order::STATUS_PENDING,
@@ -231,6 +287,7 @@ class CheckoutController
                     'shipping_method' => $totals['shipping_method_name'],
                     'coupon_code' => $totals['coupon']['code'] ?? null,
                     'meta_data' => [
+                        'checkout_fingerprint' => $this->checkoutFingerprint,
                         'tax_rate' => $totals['tax_rate'],
                         'prices_include_tax' => $totals['prices_include_tax'],
                     ],
@@ -257,7 +314,20 @@ class CheckoutController
 
                 return $order;
             });
+        } catch (UniqueConstraintViolationException $e) {
+            // The unique database constraint is the final guard even if a
+            // cache lock expires or a deployment uses independent caches.
+            $existing = Order::query()->where('checkout_key', $this->checkoutKey)->first();
+            if ($existing === null) {
+                throw $e;
+            }
+
+            return $this->replay($request, $existing);
         } catch (ValidationException $e) {
+            $existing = Order::query()->where('checkout_key', $this->checkoutKey)->first();
+            if ($existing !== null) {
+                return $this->replay($request, $existing);
+            }
             // Stock problems: show them like any other validation error
             throw $e;
         } catch (\Throwable $e) {
@@ -284,6 +354,7 @@ class CheckoutController
                 $paymentUrl = $this->payments->start($order, $gateway);
             } catch (PaymentException $e) {
                 $this->payments->cancelUnpaid($order, 'the payment provider refused to start the payment');
+                $order->forceFill(['checkout_key' => null])->save();
 
                 // 422, not 5xx: a proxy such as Cloudflare replaces 5xx bodies,
                 // and the customer needs this message to choose another method.

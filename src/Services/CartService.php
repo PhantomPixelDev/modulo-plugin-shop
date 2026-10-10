@@ -42,6 +42,11 @@ class CartService
         }
 
         $cart = $this->getCart();
+        if ($cart['items'] === []) {
+            // A new basket starts a new attempt; clearing a completed basket
+            // retains its token so a lost HTTP response can safely be retried.
+            Session::forget('shop_checkout_token');
+        }
         $itemKey = $this->findItemKey($productId, $variantId);
 
         if ($itemKey !== null) {
