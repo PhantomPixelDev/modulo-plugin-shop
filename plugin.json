@@ -2,7 +2,7 @@
   "name": "Modulo Shop",
   "slug": "modulo-shop",
   "namespace": "ModuloShop",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "requires": {
     "core": ">=0.4.1"
   },

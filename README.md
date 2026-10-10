@@ -8,7 +8,7 @@ On a production demo it runs only through the core's explicitly authorized
 `MODULO_DEMO=true` / `modulo:seed-demo --force` flow. Normal production shops do
 not receive sample products. See the core [demo testing guide](https://github.com/PhantomPixelDev/modulo-cms/blob/main/docs/demo-testing.md).
 
-A plugin for [Modulo CMS](https://github.com/PhantomPixelDev/modulo-cms). Needs Modulo 0.3.0 or newer.
+A plugin for [Modulo CMS](https://github.com/PhantomPixelDev/modulo-cms). Needs Modulo 0.4.1 or newer.
 
 ## Features
 
@@ -58,8 +58,12 @@ sidebar comes from `admin.menu` in `plugin.json`.
 
 To change them, edit `resources/js`, then rebuild and commit the bundle:
 
+Use Node 24 LTS. The independent bundle is built with Vite 8 and Inertia React 3
+types; React, Inertia, and the admin kit stay external and use the core's shared
+runtime. See the [plugin frontend guide](https://github.com/PhantomPixelDev/modulo-cms/blob/main/docs/plugin-frontend.md).
+
 ```bash
-npm install
+npm ci
 npm run types
 npm run build
 ```

@@ -11,10 +11,11 @@ export default defineConfig({
     plugins: [react(), tailwindcss()],
     define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     build: {
+        target: 'es2022',
         outDir: 'resources/dist',
         emptyOutDir: true,
         lib: { entry: 'resources/js/index.tsx', formats: ['es'], fileName: () => 'plugin.js', cssFileName: 'plugin' },
-        rollupOptions: {
+        rolldownOptions: {
             external: (id) => SHARED.includes(id) || SHARED.some((shared) => id.startsWith(`${shared}/`)),
         },
     },
